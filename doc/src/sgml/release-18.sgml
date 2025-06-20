@@ -60,13 +60,13 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 
 <listitem>
 <para>
-Change <application>initdb</application> default to enable data checksums (Greg Sabino Mullane)
+Change <xref linkend="app-initdb"/> default to enable data checksums (Greg Sabino Mullane)
 <ulink url="&commit_baseurl;04bec894a04">&sect;</ulink>
 </para>
 
 <para>
 Checksums can be disabled with the new <application>initdb</application> option <option>--no-data-checksums</option>.
-<application>pg_upgrade</application> requires matching cluster checksum settings, so this new
+<xref linkend="pgupgrade"/> requires matching cluster checksum settings, so this new
 option can be useful to upgrade non-checksum old clusters.
 </para>
 </listitem>
@@ -83,7 +83,7 @@ Change time zone abbreviation handling (Tom Lane)
 </para>
 
 <para>
-The system will now favor the current session's time zone abbreviations before checking the server variable <varname>timezone_abbreviations</varname>. Previously <varname>timezone_abbreviations</varname> was
+The system will now favor the current session's time zone abbreviations before checking the server variable <xref linkend="guc-timezone-abbreviations"/>. Previously <varname>timezone_abbreviations</varname> was
 checked first.
 </para>
 </listitem>
@@ -100,8 +100,8 @@ Deprecate MD5 password authentication (Nathan Bossart)
 </para>
 
 <para>
-Support for MD5 passwords will be removed in a future major version release.  <command>CREATE ROLE</command> and <command>ALTER ROLE</command> now emit deprecation warnings when setting MD5 passwords.
-These warnings can be disabled by setting the <varname>md5_password_warnings</varname> parameter to <literal>off</literal>.
+Support for MD5 passwords will be removed in a future major version release.  <xref linkend="sql-createrole"/> and <xref linkend="sql-alterrole"/> now emit deprecation warnings when setting MD5 passwords.
+These warnings can be disabled by setting the <xref linkend="guc-md5-password-warnings"/> parameter to <literal>off</literal>.
 </para>
 </listitem>
 
@@ -112,7 +112,7 @@ Author: David Rowley <drowley@postgresql.org>
 
 <listitem>
 <para>
-Change <command>VACUUM</command> and <command>ANALYZE</command> to process the inheritance children of a parent (Michael Harris)
+Change <xref linkend="sql-vacuum"/> and <xref linkend="sql-analyze"/> to process the inheritance children of a parent (Michael Harris)
 <ulink url="&commit_baseurl;62ddf7ee9">&sect;</ulink>
 </para>
 
@@ -130,13 +130,13 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 
 <listitem>
 <para>
-Prevent <command>COPY FROM</command> from treating <literal>\.</literal> as an end-of-file marker when reading <acronym>CSV</acronym> files (Daniel Vérité, Tom Lane)
+Prevent <link linkend="sql-copy"><command>COPY FROM</command></link> from treating <literal>\.</literal> as an end-of-file marker when reading <acronym>CSV</acronym> files (Daniel Vérité, Tom Lane)
 <ulink url="&commit_baseurl;770233748">&sect;</ulink>
 <ulink url="&commit_baseurl;da8a4c166">&sect;</ulink>
 </para>
 
 <para>
-<application>psql</application> will still treat <literal>\.</literal> as an end-of-file marker when reading <acronym>CSV</acronym> files from <literal>STDIN</literal>.  Older <application>psql</application> clients connecting to <productname>PostgreSQL</productname> 18 servers might
+<xref linkend="app-psql"/> will still treat <literal>\.</literal> as an end-of-file marker when reading <acronym>CSV</acronym> files from <literal>STDIN</literal>.  Older <application>psql</application> clients connecting to <productname>PostgreSQL</productname> 18 servers might
 experience <literal>\copy</literal> problems.  This
 release also enforces that <literal>\.</literal> must appear alone on a line.
 </para>
@@ -154,7 +154,7 @@ Disallow unlogged partitioned tables (Michael Paquier)
 </para>
 
 <para>
-Previously <command>ALTER TABLE SET [UN]LOGGED</command> did nothing, and the creation of an unlogged partitioned table did not cause its children to be unlogged.
+Previously <link linkend="sql-altertable"><command>ALTER TABLE SET [UN]LOGGED</command></link> did nothing, and the creation of an unlogged partitioned table did not cause its children to be unlogged.
 </para>
 </listitem>
 
@@ -170,7 +170,7 @@ Execute <literal>AFTER</literal> triggers as the role that was active when trigg
 </para>
 
 <para>
-Previously such triggers were run as the role that was active at trigger execution time (e.g., at <command>COMMIT</command>).  This is significant for cases where the role is changed between queue time and
+Previously such triggers were run as the role that was active at trigger execution time (e.g., at <xref linkend="sql-commit"/>).  This is significant for cases where the role is changed between queue time and
 transaction commit.
 </para>
 </listitem>
@@ -182,7 +182,7 @@ Author: Fujii Masao <fujii@postgresql.org>
 
 <listitem>
 <para>
-Remove non-functional support for rule privileges in <command>GRANT</command>/<command>REVOKE</command> (Fujii Masao)
+Remove non-functional support for rule privileges in <xref linkend="sql-grant"/>/<xref linkend="sql-revoke"/> (Fujii Masao)
 <ulink url="&commit_baseurl;fefa76f70">&sect;</ulink>
 </para>
 
@@ -198,7 +198,7 @@ Author: David Rowley <drowley@postgresql.org>
 
 <listitem>
 <para>
-Remove column <structname>pg_backend_memory_contexts</structname>.<structfield>parent</structfield> (Melih Mutlu)
+Remove column <link linkend="view-pg-backend-memory-contexts"><structname>pg_backend_memory_contexts</structname></link>.<structfield>parent</structfield> (Melih Mutlu)
 <ulink url="&commit_baseurl;f0d112759">&sect;</ulink>
 </para>
 
@@ -263,7 +263,7 @@ Automatically remove some unnecessary table self-joins (Andrey Lepikhov, Alexand
 </para>
 
 <para>
-This optimization can be disabled using server variable <varname>enable_self_join_elimination</varname>.
+This optimization can be disabled using server variable <xref linkend="guc-enable-self-join-elimination"/>.
 </para>
 </listitem>
 
@@ -319,12 +319,12 @@ Author: Richard Guo <rguo@postgresql.org>
 
 <listitem>
 <para>
-Allow the keys of <command>SELECT DISTINCT</command> to be internally reordered to avoid sorting (Richard Guo)
+Allow the keys of <link linkend="sql-select"><command>SELECT DISTINCT</command></link> to be internally reordered to avoid sorting (Richard Guo)
 <ulink url="&commit_baseurl;a8ccf4e93">&sect;</ulink>
 </para>
 
 <para>
-This optimization can be disabled using <varname>enable_distinct_reordering</varname>.
+This optimization can be disabled using <xref linkend="guc-enable-distinct-reordering"/>.
 </para>
 </listitem>
 
@@ -606,8 +606,8 @@ Add an asynchronous I/O subsystem (Andres Freund, Thomas Munro, Nazir Bilal Yavu
 
 <para>
 This feature allows backends to queue multiple read requests, which allows for more efficient sequential scans, bitmap heap scans, vacuums, etc.
-This is enabled by server variable <varname>io_method</varname>, with server variables <varname>io_combine_limit</varname> and <varname>io_max_combine_limit</varname> added to control it.  This also enables
-<varname>effective_io_concurrency</varname> and <varname>maintenance_io_concurrency</varname> values greater than zero for systems without <function>fadvise()</function> support.  The new system view <structname>pg_aios</structname> shows the file handles being used
+This is enabled by server variable <xref linkend="guc-io-method"/>, with server variables <xref linkend="guc-io-combine-limit"/> and <xref linkend="guc-io-max-combine-limit"/> added to control it.  This also enables
+<xref linkend="guc-effective-io-concurrency"/> and <xref linkend="guc-maintenance-io-concurrency"/> values greater than zero for systems without <function>fadvise()</function> support.  The new system view <link linkend="view-pg-aios"><structname>pg_aios</structname></link> shows the file handles being used
 for asynchronous I/O.
 </para>
 </listitem>
@@ -667,7 +667,7 @@ Allow normal vacuums to freeze some pages, even though they are all-visible (Mel
 </para>
 
 <para>
-This reduces the overhead of later full-relation freezing.  The aggressiveness of this can be controlled by server variable and per-table setting <varname>vacuum_max_eager_freeze_failure_rate</varname>.
+This reduces the overhead of later full-relation freezing.  The aggressiveness of this can be controlled by server variable and per-table setting <xref linkend="guc-vacuum-max-eager-freeze-failure-rate"/>.
 Previously vacuum never processed all-visible pages until freezing was required.
 </para>
 </listitem>
@@ -679,7 +679,7 @@ Author: Nathan Bossart <nathan@postgresql.org>
 
 <listitem>
 <para>
-Add server variable <varname>vacuum_truncate</varname> to control file truncation during <command>VACUUM</command> (Nathan Bossart, Gurjeet Singh)
+Add server variable <xref linkend="guc-vacuum-truncate"/> to control file truncation during <xref linkend="sql-vacuum"/> (Nathan Bossart, Gurjeet Singh)
 <ulink url="&commit_baseurl;0164a0f9e">&sect;</ulink>
 </para>
 
@@ -697,7 +697,7 @@ Author: Melanie Plageman <melanieplageman@gmail.com>
 
 <listitem>
 <para>
-Increase server variables <varname>effective_io_concurrency</varname>'s and <varname>maintenance_io_concurrency</varname>'s default values to 16 (Melanie Plageman)
+Increase server variables <xref linkend="guc-effective-io-concurrency"/>'s and <xref linkend="guc-maintenance-io-concurrency"/>'s default values to 16 (Melanie Plageman)
 <ulink url="&commit_baseurl;ff79b5b2a">&sect;</ulink>
 <ulink url="&commit_baseurl;cc6be07eb">&sect;</ulink>
 </para>
@@ -723,7 +723,7 @@ Author: Melanie Plageman <melanieplageman@gmail.com>
 
 <listitem>
 <para>
-Increase the logging granularity of server variable <varname>log_connections</varname> (Melanie Plageman)
+Increase the logging granularity of server variable <xref linkend="guc-log-connections"/> (Melanie Plageman)
 <ulink url="&commit_baseurl;9219093ca">&sect;</ulink>
 </para>
 
@@ -751,7 +751,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 
 <listitem>
 <para>
-Add <varname>log_line_prefix</varname> escape <literal>%L</literal> to output the client <acronym>IP</acronym> address (Greg Sabino Mullane)
+Add <xref linkend="guc-log-line-prefix"/> escape <literal>%L</literal> to output the client <acronym>IP</acronym> address (Greg Sabino Mullane)
 <ulink url="&commit_baseurl;3516ea768">&sect;</ulink>
 </para>
 </listitem>
@@ -763,12 +763,12 @@ Author: Fujii Masao <fujii@postgresql.org>
 
 <listitem>
 <para>
-Add server variable <varname>log_lock_failures</varname> to log lock acquisition failures (Yuki Seino)
+Add server variable <xref linkend="guc-log-lock-failures"/> to log lock acquisition failures (Yuki Seino)
 <ulink url="&commit_baseurl;6d376c3b0">&sect;</ulink>
 </para>
 
 <para>
-Specifically it reports <command>SELECT ... NOWAIT</command> lock failures.
+Specifically it reports <link linkend="sql-select"><command>SELECT ... NOWAIT</command></link> lock failures.
 </para>
 </listitem>
 
@@ -779,7 +779,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Modify <structname>pg_stat_all_tables</structname> and its variants to report the time spent in <literal>VACUUM</literal>, <literal>ANALYZE</literal>, and their automatic variants (Sami Imseih)
+Modify <link linkend="monitoring-pg-stat-all-tables-view"><structname>pg_stat_all_tables</structname></link> and its variants to report the time spent in <literal>VACUUM</literal>, <literal>ANALYZE</literal>, and their automatic variants (Sami Imseih)
 <ulink url="&commit_baseurl;30a6ed0ce">&sect;</ulink>
 </para>
 
@@ -797,14 +797,14 @@ Author: Nathan Bossart <nathan@postgresql.org>
 
 <listitem>
 <para>
-Add delay time reporting to <command>VACUUM</command> and <command>ANALYZE</command> (Bertrand Drouvot, Nathan Bossart)
+Add delay time reporting to <xref linkend="sql-vacuum"/> and <xref linkend="sql-analyze"/> (Bertrand Drouvot, Nathan Bossart)
 <ulink url="&commit_baseurl;bb8dff999">&sect;</ulink>
 <ulink url="&commit_baseurl;7720082ae">&sect;</ulink>
 </para>
 
 <para>
-This information appears in the autovacuum logs, the system views <structname>pg_stat_progress_vacuum</structname> and <structname>pg_stat_progress_analyze</structname>, and the output of <command>VACUUM</command> and <command>ANALYZE</command> when in <literal>VERBOSE</literal>
-mode; tracking must be enabled with the server variable <varname>track_cost_delay_timing</varname>.
+This information appears in the autovacuum logs, the system views <link linkend="vacuum-progress-reporting"><structname>pg_stat_progress_vacuum</structname></link> and <link linkend="pg-stat-progress-analyze-view"><structname>pg_stat_progress_analyze</structname></link>, and the output of <command>VACUUM</command> and <command>ANALYZE</command> when in <literal>VERBOSE</literal>
+mode; tracking must be enabled with the server variable <xref linkend="guc-track-cost-delay-timing"/>.
 </para>
 </listitem>
 
@@ -861,7 +861,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Add <structname>pg_stat_io</structname> columns to report I/O activity in bytes (Nazir Bilal Yavuz)
+Add <link linkend="monitoring-pg-stat-io-view"><structname>pg_stat_io</structname></link> columns to report I/O activity in bytes (Nazir Bilal Yavuz)
 <ulink url="&commit_baseurl;f92c854cf">&sect;</ulink>
 </para>
 
@@ -900,7 +900,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Change server variable <varname>track_wal_io_timing</varname> to control tracking <acronym>WAL</acronym> timing in <structname>pg_stat_io</structname> instead of <structname>pg_stat_wal</structname> (Bertrand Drouvot)
+Change server variable <xref linkend="guc-track-wal-io-timing"/> to control tracking <acronym>WAL</acronym> timing in <structname>pg_stat_io</structname> instead of <link linkend="pg-stat-wal-view"><structname>pg_stat_wal</structname></link> (Bertrand Drouvot)
 <ulink url="&commit_baseurl;6c349d83b">&sect;</ulink>
 </para>
 </listitem>
@@ -959,7 +959,7 @@ Author: Fujii Masao <fujii@postgresql.org>
 
 <listitem>
 <para>
-Add column <structname>pg_stat_checkpointer</structname>.<structfield>num_done</structfield> to report the number of completed checkpoints (Anton A. Melnikov)
+Add column <link linkend="monitoring-pg-stat-checkpointer-view"><structname>pg_stat_checkpointer</structname></link>.<structfield>num_done</structfield> to report the number of completed checkpoints (Anton A. Melnikov)
 <ulink url="&commit_baseurl;559efce1d">&sect;</ulink>
 </para>
 
@@ -991,7 +991,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Add columns to <structname>pg_stat_database</structname> to report parallel workers activity (Benoit Lobréau)
+Add columns to <link linkend="monitoring-pg-stat-database-view"><structname>pg_stat_database</structname></link> to report parallel workers activity (Benoit Lobréau)
 <ulink url="&commit_baseurl;e7a9496de">&sect;</ulink>
 </para>
 
@@ -1015,7 +1015,7 @@ Have query jumbling of arrays consider only the first and last array elements (D
 </para>
 
 <para>
-Jumbling is used by <application>pg_stat_statements</application>.
+Jumbling is used by <xref linkend="pgstatstatements"/>.
 </para>
 </listitem>
 
@@ -1042,7 +1042,7 @@ Author: David Rowley <drowley@postgresql.org>
 
 <listitem>
 <para>
-Add column <structname>pg_backend_memory_contexts</structname>.<structfield>type</structfield> to report the type of memory context (David Rowley)
+Add column <link linkend="view-pg-backend-memory-contexts"><structname>pg_backend_memory_contexts</structname></link>.<structfield>type</structfield> to report the type of memory context (David Rowley)
 <ulink url="&commit_baseurl;12227a1d5">&sect;</ulink>
 </para>
 </listitem>
@@ -1102,7 +1102,7 @@ Author: Fujii Masao <fujii@postgresql.org>
 
 <listitem>
 <para>
-Allow <command>ALTER DEFAULT PRIVILEGES</command> to define large object default privileges (Takatsuka Haruka, Yugo Nagata, Laurenz Albe)
+Allow <xref linkend="sql-alterdefaultprivileges"/> to define large object default privileges (Takatsuka Haruka, Yugo Nagata, Laurenz Albe)
 <ulink url="&commit_baseurl;0d6c47766">&sect;</ulink>
 </para>
 </listitem>
@@ -1144,7 +1144,7 @@ Add support for the OAuth authentication method (Jacob Champion, Daniel Gustafss
 </para>
 
 <para>
-This adds an <literal>oauth</literal> authentication method to <filename>pg_hba.conf</filename>, libpq OAuth options, a server variable <varname>oauth_validator_libraries</varname> to load token validation libraries, and
+This adds an <literal>oauth</literal> authentication method to <filename>pg_hba.conf</filename>, libpq OAuth options, a server variable <xref linkend="guc-oauth-validator-libraries"/> to load token validation libraries, and
 a configure flag <option>--with-libcurl</option> to add the required compile-time libraries.
 </para>
 </listitem>
@@ -1156,7 +1156,7 @@ Author: Daniel Gustafsson <dgustafsson@postgresql.org>
 
 <listitem>
 <para>
-Add server variable <varname>ssl_tls13_ciphers</varname> to allow specification of multiple colon-separated TLSv1.3 cipher suites (Erica Zhang, Daniel Gustafsson)
+Add server variable <xref linkend="guc-ssl-tls13-ciphers"/> to allow specification of multiple colon-separated TLSv1.3 cipher suites (Erica Zhang, Daniel Gustafsson)
 <ulink url="&commit_baseurl;45188c2ea">&sect;</ulink>
 </para>
 </listitem>
@@ -1168,7 +1168,7 @@ Author: Daniel Gustafsson <dgustafsson@postgresql.org>
 
 <listitem>
 <para>
-Change server variable <varname>ssl_groups</varname>'s default to include elliptic curve X25519 (Daniel Gustafsson, Jacob Champion)
+Change server variable <xref linkend="guc-ssl-groups"/>'s default to include elliptic curve X25519 (Daniel Gustafsson, Jacob Champion)
 <ulink url="&commit_baseurl;daa02c6bd">&sect;</ulink>
 </para>
 </listitem>
@@ -1180,7 +1180,7 @@ Author: Daniel Gustafsson <dgustafsson@postgresql.org>
 
 <listitem>
 <para>
-Rename server variable <varname>ssl_ecdh_curve</varname> to <varname>ssl_groups</varname> and allow multiple colon-separated <acronym>ECDH</acronym> curves to be specified (Erica Zhang, Daniel Gustafsson)
+Rename server variable <varname>ssl_ecdh_curve</varname> to <xref linkend="guc-ssl-groups"/> and allow multiple colon-separated <acronym>ECDH</acronym> curves to be specified (Erica Zhang, Daniel Gustafsson)
 <ulink url="&commit_baseurl;3d1ef3a15">&sect;</ulink>
 </para>
 
@@ -1226,12 +1226,12 @@ Author: Nathan Bossart <nathan@postgresql.org>
 
 <listitem>
 <para>
-Add server variable <varname>autovacuum_worker_slots</varname> to specify the maximum number of background workers (Nathan Bossart)
+Add server variable <xref linkend="guc-autovacuum-worker-slots"/> to specify the maximum number of background workers (Nathan Bossart)
 <ulink url="&commit_baseurl;c758119e5">&sect;</ulink>
 </para>
 
 <para>
-With this variable set, <varname>autovacuum_max_workers</varname> can be adjusted at runtime up to this maximum without a server restart.
+With this variable set, <xref linkend="guc-autovacuum-max-workers"/> can be adjusted at runtime up to this maximum without a server restart.
 </para>
 </listitem>
 
@@ -1247,7 +1247,7 @@ Allow specification of the fixed number of dead tuples that will trigger an auto
 </para>
 
 <para>
-The server variable is <varname>autovacuum_vacuum_max_threshold</varname>.  Percentages are still used for triggering.
+The server variable is <xref linkend="guc-autovacuum-vacuum-max-threshold"/>.  Percentages are still used for triggering.
 </para>
 </listitem>
 
@@ -1258,7 +1258,7 @@ Author: Andres Freund <andres@anarazel.de>
 
 <listitem>
 <para>
-Change server variable <varname>max_files_per_process</varname> to limit only files opened by a backend (Andres Freund)
+Change server variable <xref linkend="guc-max-files-per-process"/> to limit only files opened by a backend (Andres Freund)
 <ulink url="&commit_baseurl;adb5f85fa">&sect;</ulink>
 </para>
 
@@ -1274,7 +1274,7 @@ Author: Nathan Bossart <nathan@postgresql.org>
 
 <listitem>
 <para>
-Add server variable <varname>num_os_semaphores</varname> to report the required number of semaphores (Nathan Bossart)
+Add server variable <xref linkend="guc-num-os-semaphores"/> to report the required number of semaphores (Nathan Bossart)
 <ulink url="&commit_baseurl;0dcaea569">&sect;</ulink>
 </para>
 
@@ -1292,7 +1292,7 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 
 <listitem>
 <para>
-Add server variable <varname>extension_control_path</varname> to specify the location of extension control files (Peter Eisentraut, Matheus Alcantara)
+Add server variable <xref linkend="guc-extension-control-path"/> to specify the location of extension control files (Peter Eisentraut, Matheus Alcantara)
 <ulink url="&commit_baseurl;4f7f7b037">&sect;</ulink>
 <ulink url="&commit_baseurl;81eaaa2c4">&sect;</ulink>
 </para>
@@ -1314,7 +1314,7 @@ Author: Amit Kapila <akapila@postgresql.org>
 
 <listitem>
 <para>
-Allow inactive replication slots to be automatically invalided using server variable <varname>idle_replication_slot_timeout</varname> (Nisha Moond, Bharath Rupireddy)
+Allow inactive replication slots to be automatically invalided using server variable <xref linkend="guc-idle-replication-slot-timeout"/> (Nisha Moond, Bharath Rupireddy)
 <ulink url="&commit_baseurl;ac0e33136">&sect;</ulink>
 </para>
 </listitem>
@@ -1326,12 +1326,12 @@ Author: Masahiko Sawada <msawada@postgresql.org>
 
 <listitem>
 <para>
-Add server variable <varname>max_active_replication_origins</varname> to control the maximum active replication origins (Euler Taveira)
+Add server variable <xref linkend="guc-max-active-replication-origins"/> to control the maximum active replication origins (Euler Taveira)
 <ulink url="&commit_baseurl;04ff636cb">&sect;</ulink>
 </para>
 
 <para>
-This was previously controlled by <varname>max_replication_slots</varname>, but this new setting allows a higher origin count in cases where fewer slots are required.
+This was previously controlled by <xref linkend="guc-max-replication-slots"/>, but this new setting allows a higher origin count in cases where fewer slots are required.
 </para>
 </listitem>
 
@@ -1378,7 +1378,7 @@ Author: Amit Kapila <akapila@postgresql.org>
 
 <listitem>
 <para>
-Change the default <command>CREATE SUBSCRIPTION</command> streaming option from <literal>off</literal> to <literal>parallel</literal> (Vignesh C)
+Change the default <xref linkend="sql-createsubscription"/> streaming option from <literal>off</literal> to <literal>parallel</literal> (Vignesh C)
 <ulink url="&commit_baseurl;1bf1140be">&sect;</ulink>
 </para>
 </listitem>
@@ -1392,7 +1392,7 @@ Author: Amit Kapila <akapila@postgresql.org>
 
 <listitem>
 <para>
-Allow <command>ALTER SUBSCRIPTION</command> to change the replication slot's two-phase commit behavior (Hayato Kuroda, Ajin Cherian, Amit Kapila, Zhijie Hou)
+Allow <link linkend="sql-altersubscription"><command>ALTER SUBSCRIPTION</command></link> to change the replication slot's two-phase commit behavior (Hayato Kuroda, Ajin Cherian, Amit Kapila, Zhijie Hou)
 <ulink url="&commit_baseurl;1462aad2e">&sect;</ulink>
 <ulink url="&commit_baseurl;4868c96bc">&sect;</ulink>
 </para>
@@ -1422,7 +1422,7 @@ Log conflicts while applying logical replication changes (Zhijie Hou, Nisha Moon
 </para>
 
 <para>
-Also report in new columns of <structname>pg_stat_subscription_stats</structname>.
+Also report in new columns of <link linkend="monitoring-pg-stat-subscription-stats"><structname>pg_stat_subscription_stats</structname></link>.
 </para>
 </listitem>
 
@@ -1471,7 +1471,7 @@ Add <literal>OLD</literal>/<literal>NEW</literal> support to <literal>RETURNING<
 </para>
 
 <para>
-Previously <literal>RETURNING</literal> only returned new values for <command>INSERT</command> and <command>UPDATE</command>, and old values for <command>DELETE</command>; <command>MERGE</command> would return the appropriate value for the internal query executed.  This new syntax
+Previously <literal>RETURNING</literal> only returned new values for <xref linkend="sql-insert"/> and <xref linkend="sql-update"/>, and old values for <xref linkend="sql-delete"/>; <xref linkend="sql-merge"/> would return the appropriate value for the internal query executed.  This new syntax
 allows the <literal>RETURNING</literal> list of <command>INSERT</command>/<command>UPDATE</command>/<command>DELETE</command>/<command>MERGE</command> to explicitly return old and new values by using the special aliases <literal>old</literal> and <literal>new</literal>.  These aliases can be renamed to
 avoid identifier conflicts.
 </para>
@@ -1489,7 +1489,7 @@ Allow foreign tables to be created like existing local tables (Zhang Mingli)
 </para>
 
 <para>
-The syntax is <command>CREATE FOREIGN TABLE ... LIKE</command>.
+The syntax is <link linkend="sql-createforeigntable"><command>CREATE FOREIGN TABLE ... LIKE</command></link>.
 </para>
 </listitem>
 
@@ -1544,7 +1544,7 @@ Author: David Rowley <drowley@postgresql.org>
 
 <listitem>
 <para>
-Allow <command>VACUUM</command> and <command>ANALYZE</command> to process partitioned tables without processing their children (Michael Harris)
+Allow <xref linkend="sql-vacuum"/> and <xref linkend="sql-analyze"/> to process partitioned tables without processing their children (Michael Harris)
 <ulink url="&commit_baseurl;62ddf7ee9">&sect;</ulink>
 </para>
 
@@ -1583,12 +1583,12 @@ Author: Thomas Munro <tmunro@postgresql.org>
 
 <listitem>
 <para>
-Add server variable <varname>file_copy_method</varname> to control the file copying method (Nazir Bilal Yavuz)
+Add server variable <xref linkend="guc-file-copy-method"/> to control the file copying method (Nazir Bilal Yavuz)
 <ulink url="&commit_baseurl;f78ca6f3e">&sect;</ulink>
 </para>
 
 <para>
-This controls whether <command>CREATE DATABASE ... STRATEGY=FILE_COPY</command> and <command>ALTER DATABASE ... SET TABLESPACE</command> uses file copy or clone.
+This controls whether <link linkend="sql-createdatabase"><command>CREATE DATABASE ... STRATEGY=FILE_COPY</command></link> and <link linkend="sql-alterdatabase"><command>ALTER DATABASE ... SET TABLESPACE</command></link> uses file copy or clone.
 </para>
 </listitem>
 
@@ -1630,7 +1630,7 @@ Allow <literal>CHECK</literal> and foreign key constraints to be specified as <l
 </para>
 
 <para>
-This also adds column <structname>pg_constraint</structname>.<structfield>conenforced</structfield>.</para>
+This also adds column <link linkend="catalog-pg-constraint"><structname>pg_constraint</structname></link>.<structfield>conenforced</structfield>.</para>
 </listitem>
 
 <!--
@@ -1645,7 +1645,7 @@ Require primary/foreign key relationships to use either deterministic collations
 </para>
 
 <para>
-The restore of a <application>pg_dump</application>, also used by <application>pg_upgrade</application>, will fail if these requirements are not met;  schema changes must be made for these upgrade methods to succeed.
+The restore of a <xref linkend="app-pgdump"/>, also used by <xref linkend="pgupgrade"/>, will fail if these requirements are not met;  schema changes must be made for these upgrade methods to succeed.
 </para>
 </listitem>
 
@@ -1672,7 +1672,7 @@ Author: Álvaro Herrera <alvherre@alvh.no-ip.org>
 
 <listitem>
 <para>
-Allow <command>ALTER TABLE</command> to set the <literal>NOT VALID</literal> attribute of <literal>NOT NULL</literal> constraints (Rushabh Lathia, Jian He)
+Allow <xref linkend="sql-altertable"/> to set the <literal>NOT VALID</literal> attribute of <literal>NOT NULL</literal> constraints (Rushabh Lathia, Jian He)
 <ulink url="&commit_baseurl;a379061a2">&sect;</ulink>
 </para>
 </listitem>
@@ -1692,7 +1692,7 @@ Allow modification of the inheritability of <literal>NOT NULL</literal> constrai
 </para>
 
 <para>
-The syntax is <command>ALTER TABLE ... ALTER CONSTRAINT ... [NO] INHERIT</command>.
+The syntax is <link linkend="sql-altertable"><command>ALTER TABLE ... ALTER CONSTRAINT ... [NO] INHERIT</command></link>.
 </para>
 </listitem>
 
@@ -1728,7 +1728,7 @@ This was previously erroneously prohibited.
     </sect4>
 
     <sect4 id="release-18-copy">
-     <title><link linkend="sql-copy"><command>COPY</command></link></title>
+     <title><xref linkend="sql-copy"/></title>
 
       <itemizedlist>
 
@@ -1796,7 +1796,7 @@ Previously, the <command>COPY</command> worked but the <literal>FREEZE</literal>
     </sect4>
 
     <sect4 id="release-18-explain">
-     <title><link linkend="sql-explain"><command>EXPLAIN</command></link></title>
+     <title><xref linkend="sql-explain"/></title>
 
      <itemizedlist>
 
@@ -2219,7 +2219,7 @@ Allow <function>regexp_match[es]()</function>/<function>regexp_like()</function>
    </sect3>
 
    <sect3 id="release-18-libpq">
-    <title><link linkend="libpq">libpq</link></title>
+    <title><xref linkend="libpq"/></title>
 
     <itemizedlist>
 
@@ -2271,7 +2271,7 @@ Author: Tomas Vondra <tomas.vondra@postgresql.org>
 
 <listitem>
 <para>
-Report <varname>search_path</varname> changes to the client (Alexander Kukushkin, Jelte Fennema-Nio, Tomas Vondra)
+Report <xref linkend="guc-search-path"/> changes to the client (Alexander Kukushkin, Jelte Fennema-Nio, Tomas Vondra)
 <ulink url="&commit_baseurl;28a1121fd">&sect;</ulink>
 <ulink url="&commit_baseurl;0d06a7eac">&sect;</ulink>
 </para>
@@ -2502,7 +2502,7 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 
 <listitem>
 <para>
-Change <application>initdb</application> to default to enabling checksums (Greg Sabino Mullane)
+Change <xref linkend="app-initdb"/> to default to enabling checksums (Greg Sabino Mullane)
 <ulink url="&commit_baseurl;983a588e0">&sect;</ulink>
 <ulink url="&commit_baseurl;04bec894a">&sect;</ulink>
 </para>
@@ -2554,7 +2554,7 @@ Author: Robert Haas <rhaas@postgresql.org>
 
 <listitem>
 <para>
-Add <application>pg_combinebackup</application> option <option>-k</option>/<option>--link</option> to enable hard linking (Israel Barth Rubio, Robert Haas)
+Add <xref linkend="app-pgcombinebackup"/> option <option>-k</option>/<option>--link</option> to enable hard linking (Israel Barth Rubio, Robert Haas)
 <ulink url="&commit_baseurl;99aeb8470">&sect;</ulink>
 </para>
 
@@ -2582,7 +2582,7 @@ Author: Masahiko Sawada <msawada@postgresql.org>
 
 <listitem>
 <para>
-If <application>pg_rewind</application>'s <option>--source-server</option> specifies a database name, use it in <option>--write-recovery-conf</option> output (Masahiko Sawada)
+If <xref linkend="app-pgrewind"/>'s <option>--source-server</option> specifies a database name, use it in <option>--write-recovery-conf</option> output (Masahiko Sawada)
 <ulink url="&commit_baseurl;4ecdd4110">&sect;</ulink>
 </para>
 </listitem>
@@ -2617,12 +2617,12 @@ Author: Andrew Dunstan <andrew@dunslane.net>
 
 <listitem>
 <para>
-Allow <application>pg_dumpall</application> to dump in the same output formats as <application>pg_dump</application> supports (Mahendra Singh Thalor, Andrew Dunstan)
+Allow <xref linkend="app-pg-dumpall"/> to dump in the same output formats as <application>pg_dump</application> supports (Mahendra Singh Thalor, Andrew Dunstan)
 <ulink url="&commit_baseurl;1495eff7b">&sect;</ulink>
 </para>
 
 <para>
-Also modify <application>pg_restore</application> to handle such dumps.  Previously <application>pg_dumpall</application> only supported text format.
+Also modify <xref linkend="app-pgrestore"/> to handle such dumps.  Previously <application>pg_dumpall</application> only supported text format.
 </para>
 </listitem>
 
@@ -2633,7 +2633,7 @@ Author: Jeff Davis <jdavis@postgresql.org>
 
 <listitem>
 <para>
-Add <application>pg_dump</application> options <option>--with-schema</option>, <option>--with-data</option>, and <option>--with-statistics</option> (Jeff Davis)
+Add <xref linkend="app-pgdump"/> options <option>--with-schema</option>, <option>--with-data</option>, and <option>--with-statistics</option> (Jeff Davis)
 <ulink url="&commit_baseurl;bde2fb797">&sect;</ulink>
 </para>
 </listitem>
@@ -2647,7 +2647,7 @@ Author: Nathan Bossart <nathan@postgresql.org>
 
 <listitem>
 <para>
-Add <application>pg_dump</application> and <application>pg_dumpall</application> option <option>--sequence-data</option> to dump sequence data that would normally be excluded (Nathan Bossart)
+Add <application>pg_dump</application> and <xref linkend="app-pg-dumpall"/> option <option>--sequence-data</option> to dump sequence data that would normally be excluded (Nathan Bossart)
 <ulink url="&commit_baseurl;9c49f0e8c">&sect;</ulink>
 <ulink url="&commit_baseurl;acea3fc49">&sect;</ulink>
 </para>
@@ -2660,7 +2660,8 @@ Author: Jeff Davis <jdavis@postgresql.org>
 
 <listitem>
 <para>
-Add <application>pg_dump</application>, <application>pg_dumpall</application>, and <application>pg_restore</application> options <option>--statistics-only</option>, <option>--no-statistics</option>, <option>--no-data</option>, and <option>--no-schema</option> (Corey Huinker, Jeff Davis)
+Add <xref linkend="app-pgdump"/>, <xref linkend="app-pg-dumpall"/>, and
+<xref linkend="app-pgrestore"/> options <option>--statistics-only</option>, <option>--no-statistics</option>, <option>--no-data</option>, and <option>--no-schema</option> (Corey Huinker, Jeff Davis)
 <ulink url="&commit_baseurl;1fd1bd871">&sect;</ulink>
 </para>
 </listitem>
@@ -2672,7 +2673,9 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 
 <listitem>
 <para>
-Add option <option>--no-policies</option> to disable row level security policy processing in <application>pg_dump</application>, <application>pg_dumpall</application>, <application>pg_restore</application> (Nikolay Samokhvalov)
+Add option <option>--no-policies</option> to disable row level security policy processing in
+<xref linkend="app-pgdump"/>, <xref linkend="app-pg-dumpall"/>,
+<xref linkend="app-pgrestore"/> (Nikolay Samokhvalov)
 <ulink url="&commit_baseurl;cd3c45125">&sect;</ulink>
 </para>
 
@@ -2686,7 +2689,7 @@ This is useful for migrating to systems with different policies.
     </sect4>
 
     <sect4 id="release-18-pgupgrade">
-     <title><link linkend="pgupgrade"><application>pg_upgrade</application></link></title>
+     <title><xref linkend="pgupgrade"/></title>
 
      <itemizedlist>
 
@@ -2812,7 +2815,7 @@ Author: Amit Kapila <akapila@postgresql.org>
 
 <listitem>
 <para>
-Add <application>pg_createsubscriber</application> option <option>--all</option> to create logical replicas for all databases (Shubham Khanna)
+Add <xref linkend="app-pgcreatesubscriber"/> option <option>--all</option> to create logical replicas for all databases (Shubham Khanna)
 <ulink url="&commit_baseurl;fb2ea12f4">&sect;</ulink>
 </para>
 </listitem>
@@ -2848,7 +2851,7 @@ Author: Masahiko Sawada <msawada@postgresql.org>
 
 <listitem>
 <para>
-Add <application>pg_recvlogical</application> option <option>--failover</option> to specify failover slots (Hayato Kuroda)
+Add <xref linkend="app-pgrecvlogical"/> option <option>--failover</option> to specify failover slots (Hayato Kuroda)
 <ulink url="&commit_baseurl;cf2655a90">&sect;</ulink>
 </para>
 </listitem>
@@ -2997,7 +3000,7 @@ Add configure option <option>--with-libnuma</option> to enable <acronym>NUMA</ac
 </para>
 
 <para>
-The function <function>pg_numa_available()</function> reports on <acronym>NUMA</acronym> awareness, and system views <structname>pg_shmem_allocations_numa</structname> and <structname>pg_buffercache_numa</structname> which report on shared memory distribution across
+The function <function>pg_numa_available()</function> reports on <acronym>NUMA</acronym> awareness, and system views <link linkend="view-pg-shmem-allocations-numa"><structname>pg_shmem_allocations_numa</structname></link> and <link linkend="pgbuffercache-pg-buffercache-numa"><structname>pg_buffercache_numa</structname></link> which report on shared memory distribution across
 <acronym>NUMA</acronym> nodes.
 </para>
 </listitem>
@@ -3009,7 +3012,7 @@ Author: Nathan Bossart <nathan@postgresql.org>
 
 <listitem>
 <para>
-Add <acronym>TOAST</acronym> table to <structname>pg_index</structname> to allow for very large expression indexes (Nathan Bossart)
+Add <acronym>TOAST</acronym> table to <link linkend="catalog-pg-index"><structname>pg_index</structname></link> to allow for very large expression indexes (Nathan Bossart)
 <ulink url="&commit_baseurl;b52c4fc3c">&sect;</ulink>
 </para>
 </listitem>
@@ -3022,7 +3025,7 @@ Author: David Rowley <drowley@postgresql.org>
 <listitem>
 <para>
 Remove column
-<structname>pg_attribute</structname>.<structfield>attcacheoff</structfield> (David Rowley)
+<link linkend="catalog-pg-attribute"><structname>pg_attribute</structname></link>.<structfield>attcacheoff</structfield> (David Rowley)
 <ulink url="&commit_baseurl;02a8d0c45">&sect;</ulink>
 </para>
 </listitem>
@@ -3034,7 +3037,7 @@ Author: Melanie Plageman <melanieplageman@gmail.com>
 
 <listitem>
 <para>
-Add column <structname>pg_class</structname>.<structfield>relallfrozen</structfield> (Melanie Plageman)
+Add column <link linkend="catalog-pg-class"><structname>pg_class</structname></link>.<structfield>relallfrozen</structfield> (Melanie Plageman)
 <ulink url="&commit_baseurl;99f8f3fbb">&sect;</ulink>
 </para>
 </listitem>
@@ -3087,7 +3090,7 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 
 <listitem>
 <para>
-Add support for Python "Limited <acronym>API</acronym>" in <application>PL/Python</application> (Peter Eisentraut)
+Add support for Python "Limited <acronym>API</acronym>" in <xref linkend="plpython"/> (Peter Eisentraut)
 <ulink url="&commit_baseurl;72a3d0462">&sect;</ulink>
 <ulink url="&commit_baseurl;0793ab810">&sect;</ulink>
 </para>
@@ -3239,7 +3242,7 @@ Author: Masahiko Sawada <msawada@postgresql.org>
 
 <listitem>
 <para>
-Add extension <application>pg_logicalinspect</application> to inspect logical snapshots (Bertrand Drouvot)
+Add extension <xref linkend="pglogicalinspect"/> to inspect logical snapshots (Bertrand Drouvot)
 <ulink url="&commit_baseurl;7cdfeee32">&sect;</ulink>
 </para>
 </listitem>
@@ -3251,7 +3254,7 @@ Author: Robert Haas <rhaas@postgresql.org>
 
 <listitem>
 <para>
-Add extension <application>pg_overexplain</application> which adds debug details to <command>EXPLAIN</command> output (Robert Haas)
+Add extension <application>pg_overexplain</application> which adds debug details to <link linkend="sql-explain"><command>EXPLAIN</command></link> output (Robert Haas)
 <ulink url="&commit_baseurl;8d5ceb113">&sect;</ulink>
 </para>
 </listitem>
@@ -3289,7 +3292,8 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 
 <listitem>
 <para>
-Allow <acronym>SCRAM</acronym> authentication from the client to be passed to <application>postgres_fdw</application> servers (Matheus Alcantara, Peter Eisentraut)
+Allow <acronym>SCRAM</acronym> authentication from the client to be passed to
+<xref linkend="postgres-fdw"/> servers (Matheus Alcantara, Peter Eisentraut)
 <ulink url="&commit_baseurl;761c79508">&sect;</ulink>
 </para>
 
@@ -3307,7 +3311,8 @@ Author: Peter Eisentraut <peter@eisentraut.org>
 
 <listitem>
 <para>
-Allow <acronym>SCRAM</acronym> authentication from the client to be passed to <application>dblink</application> servers (Matheus Alcantara)
+Allow <acronym>SCRAM</acronym> authentication from the client to be passed to
+<xref linkend="dblink"/> servers (Matheus Alcantara)
 <ulink url="&commit_baseurl;3642df265">&sect;</ulink>
 </para>
 </listitem>
@@ -3319,7 +3324,7 @@ Author: Fujii Masao <fujii@postgresql.org>
 
 <listitem>
 <para>
-Add <literal>on_error</literal> and <literal>log_verbosity</literal> options to <application>file_fdw</application> (Atsushi Torikoshi)
+Add <literal>on_error</literal> and <literal>log_verbosity</literal> options to <xref linkend="file-fdw"/> (Atsushi Torikoshi)
 <ulink url="&commit_baseurl;a1c4c8a9e">&sect;</ulink>
 </para>
 
@@ -3351,7 +3356,8 @@ Author: Nathan Bossart <nathan@postgresql.org>
 
 <listitem>
 <para>
-Add configurable variable <varname>min_password_length</varname> to <application>passwordcheck</application> (Emanuele Musella, Maurizio Boriani)
+Add configurable variable <varname>min_password_length</varname> to
+<xref linkend="passwordcheck"/> (Emanuele Musella, Maurizio Boriani)
 <ulink url="&commit_baseurl;f7e1b3828">&sect;</ulink>
 </para>
 
@@ -3379,7 +3385,7 @@ Author: Tom Lane <tgl@sss.pgh.pa.us>
 
 <listitem>
 <para>
-Add <application>isn</application> server variable <literal>weak</literal> to control invalid check digit acceptance (Viktor Holmberg)
+Add <xref linkend="isn"/> server variable <literal>weak</literal> to control invalid check digit acceptance (Viktor Holmberg)
 <ulink url="&commit_baseurl;448904423">&sect;</ulink>
 </para>
 
@@ -3439,7 +3445,7 @@ Author: Robert Haas <rhaas@postgresql.org>
 
 <listitem>
 <para>
-Allow extensions to install custom <command>EXPLAIN</command> options (Robert Haas, Sami Imseih)
+Allow extensions to install custom <link linkend="sql-explain"><command>EXPLAIN</command></link> options (Robert Haas, Sami Imseih)
 <ulink url="&commit_baseurl;c65bc2e1d">&sect;</ulink>
 <ulink url="&commit_baseurl;4fd02bf7c">&sect;</ulink>
 <ulink url="&commit_baseurl;50ba65e73">&sect;</ulink>
@@ -3464,7 +3470,7 @@ Allow extensions to use the server's cumulative statistics <acronym>API</acronym
     </itemizedlist>
 
     <sect4 id="release-18-pgstatstatements">
-     <title><link linkend="pgstatstatements"><application>pg_stat_statements</application></link></title>
+     <title><xref linkend="pgstatstatements"/></title>
 
      <itemizedlist>
 
@@ -3475,7 +3481,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Allow the queries of <command>CREATE TABLE AS</command> and <command>DECLARE</command> to be tracked by <application>pg_stat_statements</application> (Anthonin Bonnefoy)
+Allow the queries of <xref linkend="sql-createtableas"/> and <xref linkend="sql-declare"/> to be tracked by <application>pg_stat_statements</application> (Anthonin Bonnefoy)
 <ulink url="&commit_baseurl;6b652e6ce">&sect;</ulink>
 </para>
 
@@ -3491,7 +3497,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Allow the parameterization of <command>SET</command> values in <application>pg_stat_statements</application> (Greg Sabino Mullane, Michael Paquier)
+Allow the parameterization of <xref linkend="sql-set"/> values in <application>pg_stat_statements</application> (Greg Sabino Mullane, Michael Paquier)
 <ulink url="&commit_baseurl;dc6851596">&sect;</ulink>
 </para>
 
@@ -3507,7 +3513,7 @@ Author: Michael Paquier <michael@paquier.xyz>
 
 <listitem>
 <para>
-Add <application>pg_stat_statements</application> columns to report parallel activity (Guillaume Lelarge)
+Add <link linkend="pgstatstatements-pg-stat-statements"><structname>pg_stat_statements</structname></link> columns to report parallel activity (Guillaume Lelarge)
 <ulink url="&commit_baseurl;cf54a2c00">&sect;</ulink>
 </para>
 
@@ -3533,7 +3539,7 @@ Add <structname>pg_stat_statements</structname>.<structfield>wal_buffers_full</s
     </sect4>
 
     <sect4 id="release-18-pgcrypto">
-     <title><link linkend="pgcrypto"><application>pgcrypto</application></link></title>
+     <title><xref linkend="pgcrypto"/></title>
 
      <itemizedlist>
 
