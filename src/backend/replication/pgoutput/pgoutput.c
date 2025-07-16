@@ -297,10 +297,12 @@ parse_output_parameters(List *options, PGOutputData *data)
 	bool		two_phase_option_given = false;
 	bool		origin_option_given = false;
 
+	/* Initialize optional parameters to defaults */
 	data->binary = false;
 	data->streaming = LOGICALREP_STREAM_OFF;
 	data->messages = false;
 	data->two_phase = false;
+	data->publish_no_origin = false;
 
 	foreach(lc, options)
 	{
@@ -1789,7 +1791,7 @@ LoadPublications(List *pubnames)
 		else
 			ereport(WARNING,
 					errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-					errmsg("skipped loading publication: %s", pubname),
+					errmsg("skipped loading publication \"%s\"", pubname),
 					errdetail("The publication does not exist at this point in the WAL."),
 					errhint("Create the publication if it does not exist."));
 	}

@@ -449,7 +449,6 @@ typedef struct XLogCtlData
 	/* Protected by info_lck: */
 	XLogwrtRqst LogwrtRqst;
 	XLogRecPtr	RedoRecPtr;		/* a recent copy of Insert->RedoRecPtr */
-	FullTransactionId ckptFullXid;	/* nextXid of latest checkpoint */
 	XLogRecPtr	asyncXactLSN;	/* LSN of newest async commit/abort */
 	XLogRecPtr	replicationSlotMinLSN;	/* oldest LSN needed by any slot */
 
@@ -1028,7 +1027,7 @@ XLogInsertRecord(XLogRecData *rdata,
 		oldCxt = MemoryContextSwitchTo(walDebugCxt);
 
 		initStringInfo(&buf);
-		appendStringInfo(&buf, "INSERT @ %X/%X: ", LSN_FORMAT_ARGS(EndPos));
+		appendStringInfo(&buf, "INSERT @ %X/%08X: ", LSN_FORMAT_ARGS(EndPos));
 
 		/*
 		 * We have to piece together the WAL record data from the XLogRecData
@@ -1549,8 +1548,8 @@ WaitXLogInsertionsToFinish(XLogRecPtr upto)
 	if (upto > reservedUpto)
 	{
 		ereport(LOG,
-				(errmsg("request to flush past end of generated WAL; request %X/%X, current position %X/%X",
-						LSN_FORMAT_ARGS(upto), LSN_FORMAT_ARGS(reservedUpto))));
+				errmsg("request to flush past end of generated WAL; request %X/%08X, current position %X/%08X",
+					   LSN_FORMAT_ARGS(upto), LSN_FORMAT_ARGS(reservedUpto)));
 		upto = reservedUpto;
 	}
 
@@ -1716,7 +1715,7 @@ GetXLogBuffer(XLogRecPtr ptr, TimeLineID tli)
 		endptr = pg_atomic_read_u64(&XLogCtl->xlblocks[idx]);
 
 		if (expectedEndPtr != endptr)
-			elog(PANIC, "could not find WAL buffer for %X/%X",
+			elog(PANIC, "could not find WAL buffer for %X/%08X",
 				 LSN_FORMAT_ARGS(ptr));
 	}
 	else
@@ -1776,7 +1775,7 @@ WALReadFromBuffers(char *dstbuf, XLogRecPtr startptr, Size count,
 	inserted = pg_atomic_read_u64(&XLogCtl->logInsertResult);
 	if (startptr + count > inserted)
 		ereport(ERROR,
-				errmsg("cannot read past end of generated WAL: requested %X/%X, current position %X/%X",
+				errmsg("cannot read past end of generated WAL: requested %X/%08X, current position %X/%08X",
 					   LSN_FORMAT_ARGS(startptr + count),
 					   LSN_FORMAT_ARGS(inserted)));
 
@@ -2281,7 +2280,7 @@ AdvanceXLInsertBuffer(XLogRecPtr upto, TimeLineID tli, bool opportunistic)
 #ifdef WAL_DEBUG
 	if (XLOG_DEBUG && npages > 0)
 	{
-		elog(DEBUG1, "initialized %d pages, up to %X/%X",
+		elog(DEBUG1, "initialized %d pages, up to %X/%08X",
 			 npages, LSN_FORMAT_ARGS(NewPageEndPtr));
 	}
 #endif
@@ -2340,25 +2339,6 @@ check_wal_segment_size(int *newval, void **extra, GucSource source)
 	if (!IsValidWalSegSize(*newval))
 	{
 		GUC_check_errdetail("The WAL segment size must be a power of two between 1 MB and 1 GB.");
-		return false;
-	}
-
-	return true;
-}
-
-/*
- * GUC check_hook for max_slot_wal_keep_size
- *
- * We don't allow the value of max_slot_wal_keep_size other than -1 during the
- * binary upgrade. See start_postmaster() in pg_upgrade for more details.
- */
-bool
-check_max_slot_wal_keep_size(int *newval, void **extra, GucSource source)
-{
-	if (IsBinaryUpgrade && *newval != -1)
-	{
-		GUC_check_errdetail("\"%s\" must be set to -1 during binary upgrade mode.",
-							"max_slot_wal_keep_size");
 		return false;
 	}
 
@@ -2492,7 +2472,7 @@ XLogWrite(XLogwrtRqst WriteRqst, TimeLineID tli, bool flexible)
 		XLogRecPtr	EndPtr = pg_atomic_read_u64(&XLogCtl->xlblocks[curridx]);
 
 		if (LogwrtResult.Write >= EndPtr)
-			elog(PANIC, "xlog write request %X/%X is past end of log %X/%X",
+			elog(PANIC, "xlog write request %X/%08X is past end of log %X/%08X",
 				 LSN_FORMAT_ARGS(LogwrtResult.Write),
 				 LSN_FORMAT_ARGS(EndPtr));
 
@@ -2892,7 +2872,7 @@ UpdateMinRecoveryPoint(XLogRecPtr lsn, bool force)
 		newMinRecoveryPoint = GetCurrentReplayRecPtr(&newMinRecoveryPointTLI);
 		if (!force && newMinRecoveryPoint < lsn)
 			elog(WARNING,
-				 "xlog min recovery request %X/%X is past current point %X/%X",
+				 "xlog min recovery request %X/%08X is past current point %X/%08X",
 				 LSN_FORMAT_ARGS(lsn), LSN_FORMAT_ARGS(newMinRecoveryPoint));
 
 		/* update control file */
@@ -2905,9 +2885,9 @@ UpdateMinRecoveryPoint(XLogRecPtr lsn, bool force)
 			LocalMinRecoveryPointTLI = newMinRecoveryPointTLI;
 
 			ereport(DEBUG2,
-					(errmsg_internal("updated min recovery point to %X/%X on timeline %u",
-									 LSN_FORMAT_ARGS(newMinRecoveryPoint),
-									 newMinRecoveryPointTLI)));
+					errmsg_internal("updated min recovery point to %X/%08X on timeline %u",
+									LSN_FORMAT_ARGS(newMinRecoveryPoint),
+									newMinRecoveryPointTLI));
 		}
 	}
 	LWLockRelease(ControlFileLock);
@@ -2945,7 +2925,7 @@ XLogFlush(XLogRecPtr record)
 
 #ifdef WAL_DEBUG
 	if (XLOG_DEBUG)
-		elog(LOG, "xlog flush request %X/%X; write %X/%X; flush %X/%X",
+		elog(LOG, "xlog flush request %X/%08X; write %X/%08X; flush %X/%08X",
 			 LSN_FORMAT_ARGS(record),
 			 LSN_FORMAT_ARGS(LogwrtResult.Write),
 			 LSN_FORMAT_ARGS(LogwrtResult.Flush));
@@ -3078,7 +3058,7 @@ XLogFlush(XLogRecPtr record)
 	 */
 	if (LogwrtResult.Flush < record)
 		elog(ERROR,
-			 "xlog flush request %X/%X is not satisfied --- flushed only to %X/%X",
+			 "xlog flush request %X/%08X is not satisfied --- flushed only to %X/%08X",
 			 LSN_FORMAT_ARGS(record),
 			 LSN_FORMAT_ARGS(LogwrtResult.Flush));
 }
@@ -3205,7 +3185,7 @@ XLogBackgroundFlush(void)
 
 #ifdef WAL_DEBUG
 	if (XLOG_DEBUG)
-		elog(LOG, "xlog bg flush request write %X/%X; flush: %X/%X, current is write %X/%X; flush %X/%X",
+		elog(LOG, "xlog bg flush request write %X/%08X; flush: %X/%08X, current is write %X/%08X; flush %X/%08X",
 			 LSN_FORMAT_ARGS(WriteRqst.Write),
 			 LSN_FORMAT_ARGS(WriteRqst.Flush),
 			 LSN_FORMAT_ARGS(LogwrtResult.Write),
@@ -5763,7 +5743,6 @@ StartupXLOG(void)
 	SetMultiXactIdLimit(checkPoint.oldestMulti, checkPoint.oldestMultiDB, true);
 	SetCommitTsLimit(checkPoint.oldestCommitTsXid,
 					 checkPoint.newestCommitTsXid);
-	XLogCtl->ckptFullXid = checkPoint.nextXid;
 
 	/*
 	 * Clear out any old relcache cache files.  This is *necessary* if we do
@@ -6505,7 +6484,7 @@ PerformRecoveryXLogAction(void)
 	else
 	{
 		RequestCheckpoint(CHECKPOINT_END_OF_RECOVERY |
-						  CHECKPOINT_IMMEDIATE |
+						  CHECKPOINT_FAST |
 						  CHECKPOINT_WAIT);
 	}
 
@@ -6814,7 +6793,7 @@ ShutdownXLOG(int code, Datum arg)
 	WalSndWaitStopping();
 
 	if (RecoveryInProgress())
-		CreateRestartPoint(CHECKPOINT_IS_SHUTDOWN | CHECKPOINT_IMMEDIATE);
+		CreateRestartPoint(CHECKPOINT_IS_SHUTDOWN | CHECKPOINT_FAST);
 	else
 	{
 		/*
@@ -6826,7 +6805,7 @@ ShutdownXLOG(int code, Datum arg)
 		if (XLogArchivingActive())
 			RequestXLogSwitch(false);
 
-		CreateCheckPoint(CHECKPOINT_IS_SHUTDOWN | CHECKPOINT_IMMEDIATE);
+		CreateCheckPoint(CHECKPOINT_IS_SHUTDOWN | CHECKPOINT_FAST);
 	}
 }
 
@@ -6842,24 +6821,24 @@ LogCheckpointStart(int flags, bool restartpoint)
 				(errmsg("restartpoint starting:%s%s%s%s%s%s%s%s",
 						(flags & CHECKPOINT_IS_SHUTDOWN) ? " shutdown" : "",
 						(flags & CHECKPOINT_END_OF_RECOVERY) ? " end-of-recovery" : "",
-						(flags & CHECKPOINT_IMMEDIATE) ? " immediate" : "",
+						(flags & CHECKPOINT_FAST) ? " fast" : "",
 						(flags & CHECKPOINT_FORCE) ? " force" : "",
 						(flags & CHECKPOINT_WAIT) ? " wait" : "",
 						(flags & CHECKPOINT_CAUSE_XLOG) ? " wal" : "",
 						(flags & CHECKPOINT_CAUSE_TIME) ? " time" : "",
-						(flags & CHECKPOINT_FLUSH_ALL) ? " flush-all" : "")));
+						(flags & CHECKPOINT_FLUSH_UNLOGGED) ? " flush-unlogged" : "")));
 	else
 		ereport(LOG,
 		/* translator: the placeholders show checkpoint options */
 				(errmsg("checkpoint starting:%s%s%s%s%s%s%s%s",
 						(flags & CHECKPOINT_IS_SHUTDOWN) ? " shutdown" : "",
 						(flags & CHECKPOINT_END_OF_RECOVERY) ? " end-of-recovery" : "",
-						(flags & CHECKPOINT_IMMEDIATE) ? " immediate" : "",
+						(flags & CHECKPOINT_FAST) ? " fast" : "",
 						(flags & CHECKPOINT_FORCE) ? " force" : "",
 						(flags & CHECKPOINT_WAIT) ? " wait" : "",
 						(flags & CHECKPOINT_CAUSE_XLOG) ? " wal" : "",
 						(flags & CHECKPOINT_CAUSE_TIME) ? " time" : "",
-						(flags & CHECKPOINT_FLUSH_ALL) ? " flush-all" : "")));
+						(flags & CHECKPOINT_FLUSH_UNLOGGED) ? " flush-unlogged" : "")));
 }
 
 /*
@@ -6921,7 +6900,7 @@ LogCheckpointEnd(bool restartpoint)
 						"%d removed, %d recycled; write=%ld.%03d s, "
 						"sync=%ld.%03d s, total=%ld.%03d s; sync files=%d, "
 						"longest=%ld.%03d s, average=%ld.%03d s; distance=%d kB, "
-						"estimate=%d kB; lsn=%X/%X, redo lsn=%X/%X",
+						"estimate=%d kB; lsn=%X/%08X, redo lsn=%X/%08X",
 						CheckpointStats.ckpt_bufs_written,
 						(double) CheckpointStats.ckpt_bufs_written * 100 / NBuffers,
 						CheckpointStats.ckpt_slru_written,
@@ -6945,7 +6924,7 @@ LogCheckpointEnd(bool restartpoint)
 						"%d removed, %d recycled; write=%ld.%03d s, "
 						"sync=%ld.%03d s, total=%ld.%03d s; sync files=%d, "
 						"longest=%ld.%03d s, average=%ld.%03d s; distance=%d kB, "
-						"estimate=%d kB; lsn=%X/%X, redo lsn=%X/%X",
+						"estimate=%d kB; lsn=%X/%08X, redo lsn=%X/%08X",
 						CheckpointStats.ckpt_bufs_written,
 						(double) CheckpointStats.ckpt_bufs_written * 100 / NBuffers,
 						CheckpointStats.ckpt_slru_written,
@@ -7042,12 +7021,12 @@ update_checkpoint_display(int flags, bool restartpoint, bool reset)
  * flags is a bitwise OR of the following:
  *	CHECKPOINT_IS_SHUTDOWN: checkpoint is for database shutdown.
  *	CHECKPOINT_END_OF_RECOVERY: checkpoint is for end of WAL recovery.
- *	CHECKPOINT_IMMEDIATE: finish the checkpoint ASAP,
- *		ignoring checkpoint_completion_target parameter.
+ *	CHECKPOINT_FAST: finish the checkpoint ASAP, ignoring
+ *		checkpoint_completion_target parameter.
  *	CHECKPOINT_FORCE: force a checkpoint even if no XLOG activity has occurred
  *		since the last one (implied by CHECKPOINT_IS_SHUTDOWN or
  *		CHECKPOINT_END_OF_RECOVERY).
- *	CHECKPOINT_FLUSH_ALL: also flush buffers of unlogged tables.
+ *	CHECKPOINT_FLUSH_UNLOGGED: also flush buffers of unlogged tables.
  *
  * Note: flags contains other bits, of interest here only for logging purposes.
  * In particular note that this routine is synchronous and does not pay
@@ -7456,11 +7435,6 @@ CreateCheckPoint(int flags)
 	UpdateControlFile();
 	LWLockRelease(ControlFileLock);
 
-	/* Update shared-memory copy of checkpoint XID/epoch */
-	SpinLockAcquire(&XLogCtl->info_lck);
-	XLogCtl->ckptFullXid = checkPoint.nextXid;
-	SpinLockRelease(&XLogCtl->info_lck);
-
 	/*
 	 * We are now done with critical updates; no need for system panic if we
 	 * have trouble while fooling with old log segments.
@@ -7641,7 +7615,7 @@ CreateOverwriteContrecordRecord(XLogRecPtr aborted_lsn, XLogRecPtr pagePtr,
 	if (!RecoveryInProgress())
 		elog(ERROR, "can only be used at end of recovery");
 	if (pagePtr % XLOG_BLCKSZ != 0)
-		elog(ERROR, "invalid position for missing continuation record %X/%X",
+		elog(ERROR, "invalid position for missing continuation record %X/%08X",
 			 LSN_FORMAT_ARGS(pagePtr));
 
 	/* The current WAL insert position should be right after the page header */
@@ -7652,7 +7626,7 @@ CreateOverwriteContrecordRecord(XLogRecPtr aborted_lsn, XLogRecPtr pagePtr,
 		startPos += SizeOfXLogShortPHD;
 	recptr = GetXLogInsertRecPtr();
 	if (recptr != startPos)
-		elog(ERROR, "invalid WAL insert position %X/%X for OVERWRITE_CONTRECORD",
+		elog(ERROR, "invalid WAL insert position %X/%08X for OVERWRITE_CONTRECORD",
 			 LSN_FORMAT_ARGS(recptr));
 
 	START_CRIT_SECTION();
@@ -7682,7 +7656,7 @@ CreateOverwriteContrecordRecord(XLogRecPtr aborted_lsn, XLogRecPtr pagePtr,
 
 	/* check that the record was inserted to the right place */
 	if (ProcLastRecPtr != startPos)
-		elog(ERROR, "OVERWRITE_CONTRECORD was inserted to unexpected position %X/%X",
+		elog(ERROR, "OVERWRITE_CONTRECORD was inserted to unexpected position %X/%08X",
 			 LSN_FORMAT_ARGS(ProcLastRecPtr));
 
 	XLogFlush(recptr);
@@ -7751,8 +7725,7 @@ RecoveryRestartPoint(const CheckPoint *checkPoint, XLogReaderState *record)
 	if (XLogHaveInvalidPages())
 	{
 		elog(DEBUG2,
-			 "could not record restart point at %X/%X because there "
-			 "are unresolved references to invalid pages",
+			 "could not record restart point at %X/%08X because there are unresolved references to invalid pages",
 			 LSN_FORMAT_ARGS(checkPoint->redo));
 		return;
 	}
@@ -7832,8 +7805,8 @@ CreateRestartPoint(int flags)
 		lastCheckPoint.redo <= ControlFile->checkPointCopy.redo)
 	{
 		ereport(DEBUG2,
-				(errmsg_internal("skipping restartpoint, already performed at %X/%X",
-								 LSN_FORMAT_ARGS(lastCheckPoint.redo))));
+				errmsg_internal("skipping restartpoint, already performed at %X/%08X",
+								LSN_FORMAT_ARGS(lastCheckPoint.redo)));
 
 		UpdateMinRecoveryPoint(InvalidXLogRecPtr, true);
 		if (flags & CHECKPOINT_IS_SHUTDOWN)
@@ -8017,10 +7990,10 @@ CreateRestartPoint(int flags)
 
 	xtime = GetLatestXTime();
 	ereport((log_checkpoints ? LOG : DEBUG2),
-			(errmsg("recovery restart point at %X/%X",
-					LSN_FORMAT_ARGS(lastCheckPoint.redo)),
-			 xtime ? errdetail("Last completed transaction was at log time %s.",
-							   timestamptz_to_str(xtime)) : 0));
+			errmsg("recovery restart point at %X/%08X",
+				   LSN_FORMAT_ARGS(lastCheckPoint.redo)),
+			xtime ? errdetail("Last completed transaction was at log time %s.",
+							  timestamptz_to_str(xtime)) : 0);
 
 	/*
 	 * Finally, execute archive_cleanup_command, if any.
@@ -8151,17 +8124,19 @@ KeepLogSeg(XLogRecPtr recptr, XLogSegNo *logSegNo)
 	XLByteToSeg(recptr, currSegNo, wal_segment_size);
 	segno = currSegNo;
 
-	/*
-	 * Calculate how many segments are kept by slots first, adjusting for
-	 * max_slot_wal_keep_size.
-	 */
+	/* Calculate how many segments are kept by slots. */
 	keep = XLogGetReplicationSlotMinimumLSN();
 	if (keep != InvalidXLogRecPtr && keep < recptr)
 	{
 		XLByteToSeg(keep, segno, wal_segment_size);
 
-		/* Cap by max_slot_wal_keep_size ... */
-		if (max_slot_wal_keep_size_mb >= 0)
+		/*
+		 * Account for max_slot_wal_keep_size to avoid keeping more than
+		 * configured.  However, don't do that during a binary upgrade: if
+		 * slots were to be invalidated because of this, it would not be
+		 * possible to preserve logical ones during the upgrade.
+		 */
+		if (max_slot_wal_keep_size_mb >= 0 && !IsBinaryUpgrade)
 		{
 			uint64		slot_keep_segs;
 
@@ -8281,8 +8256,8 @@ XLogRestorePoint(const char *rpName)
 	RecPtr = XLogInsert(RM_XLOG_ID, XLOG_RESTORE_POINT);
 
 	ereport(LOG,
-			(errmsg("restore point \"%s\" created at %X/%X",
-					rpName, LSN_FORMAT_ARGS(RecPtr))));
+			errmsg("restore point \"%s\" created at %X/%08X",
+				   rpName, LSN_FORMAT_ARGS(RecPtr)));
 
 	return RecPtr;
 }
@@ -8534,11 +8509,6 @@ xlog_redo(XLogReaderState *record)
 		ControlFile->checkPointCopy.nextXid = checkPoint.nextXid;
 		LWLockRelease(ControlFileLock);
 
-		/* Update shared-memory copy of checkpoint XID/epoch */
-		SpinLockAcquire(&XLogCtl->info_lck);
-		XLogCtl->ckptFullXid = checkPoint.nextXid;
-		SpinLockRelease(&XLogCtl->info_lck);
-
 		/*
 		 * We should've already switched to the new TLI before replaying this
 		 * record.
@@ -8594,11 +8564,6 @@ xlog_redo(XLogReaderState *record)
 		LWLockAcquire(ControlFileLock, LW_EXCLUSIVE);
 		ControlFile->checkPointCopy.nextXid = checkPoint.nextXid;
 		LWLockRelease(ControlFileLock);
-
-		/* Update shared-memory copy of checkpoint XID/epoch */
-		SpinLockAcquire(&XLogCtl->info_lck);
-		XLogCtl->ckptFullXid = checkPoint.nextXid;
-		SpinLockRelease(&XLogCtl->info_lck);
 
 		/* TLI should not change in an on-line checkpoint */
 		(void) GetCurrentReplayRecPtr(&replayTLI);
@@ -8947,9 +8912,8 @@ issue_xlog_fsync(int fd, XLogSegNo segno, TimeLineID tli)
  * backup state and tablespace map.
  *
  * Input parameters are "state" (the backup state), "fast" (if true, we do
- * the checkpoint in immediate mode to make it faster), and "tablespaces"
- * (if non-NULL, indicates a list of tablespaceinfo structs describing the
- * cluster's tablespaces.).
+ * the checkpoint in fast mode), and "tablespaces" (if non-NULL, indicates a
+ * list of tablespaceinfo structs describing the cluster's tablespaces.).
  *
  * The tablespace map contents are appended to passed-in parameter
  * tablespace_map and the caller is responsible for including it in the backup
@@ -9077,11 +9041,11 @@ do_pg_backup_start(const char *backupidstr, bool fast, List **tablespaces,
 			 * during recovery means that checkpointer is running, we can use
 			 * RequestCheckpoint() to establish a restartpoint.
 			 *
-			 * We use CHECKPOINT_IMMEDIATE only if requested by user (via
-			 * passing fast = true).  Otherwise this can take awhile.
+			 * We use CHECKPOINT_FAST only if requested by user (via passing
+			 * fast = true).  Otherwise this can take awhile.
 			 */
 			RequestCheckpoint(CHECKPOINT_FORCE | CHECKPOINT_WAIT |
-							  (fast ? CHECKPOINT_IMMEDIATE : 0));
+							  (fast ? CHECKPOINT_FAST : 0));
 
 			/*
 			 * Now we need to fetch the checkpoint record location, and also
