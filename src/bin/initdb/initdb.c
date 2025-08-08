@@ -292,6 +292,7 @@ static void load_plpgsql(FILE *cmdfd);
 static void vacuum_db(FILE *cmdfd);
 static void make_template0(FILE *cmdfd);
 static void make_postgres(FILE *cmdfd);
+static void make_kairos(FILE *cmdfd);
 static void trapsig(SIGNAL_ARGS);
 static void check_ok(void);
 static char *escape_quotes(const char *src);
@@ -2072,7 +2073,20 @@ make_postgres(FILE *cmdfd)
 				" STRATEGY = file_copy;\n\n");
 	PG_CMD_PUTS("COMMENT ON DATABASE postgres IS 'default administrative connection database';\n\n");
 }
-
+/*
+ * copy template1 to kairos
+ */
+static void
+make_kairos(FILE *cmdfd)
+{
+	/*
+	 * Just as we did for template0, and for the same reasons, assign a fixed
+	 * OID to kairos and select the file_copy strategy.
+	 */
+	PG_CMD_PUTS("CREATE DATABASE kairos OID = " CppAsString2(KairosDbOid)
+				" STRATEGY = file_copy;\n\n");
+	PG_CMD_PUTS("COMMENT ON DATABASE kairos IS 'καιρός an opportune moment in time';\n\n");
+}
 /*
  * signal handler in case we are interrupted.
  *
