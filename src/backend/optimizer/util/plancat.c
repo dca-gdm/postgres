@@ -59,6 +59,12 @@ int			constraint_exclusion = CONSTRAINT_EXCLUSION_PARTITION;
 /* Hook for plugins to get control in get_relation_info() */
 get_relation_info_hook_type get_relation_info_hook = NULL;
 
+typedef struct NotnullHashEntry
+{
+	Oid			relid;			/* OID of the relation */
+	Relids		notnullattnums; /* attnums of NOT NULL columns */
+} NotnullHashEntry;
+
 
 static void get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
 									  Relation relation, bool inhparent);
@@ -172,27 +178,7 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 	 * RangeTblEntry does get populated.
 	 */
 	if (!inhparent || relation->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
-	{
-		for (int i = 0; i < relation->rd_att->natts; i++)
-		{
-			CompactAttribute *attr = TupleDescCompactAttr(relation->rd_att, i);
-
-			Assert(attr->attnullability != ATTNULLABLE_UNKNOWN);
-
-			if (attr->attnullability == ATTNULLABLE_VALID)
-			{
-				rel->notnullattnums = bms_add_member(rel->notnullattnums,
-													 i + 1);
-
-				/*
-				 * Per RemoveAttributeById(), dropped columns will have their
-				 * attnotnull unset, so we needn't check for dropped columns
-				 * in the above condition.
-				 */
-				Assert(!attr->attisdropped);
-			}
-		}
-	}
+		rel->notnullattnums = find_relation_notnullatts(root, relationObjectId);
 
 	/*
 	 * Estimate relation size --- unless it's an inheritance parent, in which
@@ -681,6 +667,105 @@ get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
 			root->fkey_list = lappend(root->fkey_list, info);
 		}
 	}
+}
+
+/*
+ * get_relation_notnullatts -
+ *	  Retrieves column not-null constraint information for a given relation.
+ *
+ * We do this while we have the relcache entry open, and store the column
+ * not-null constraint information in a hash table based on the relation OID.
+ */
+void
+get_relation_notnullatts(PlannerInfo *root, Relation relation)
+{
+	Oid			relid = RelationGetRelid(relation);
+	NotnullHashEntry *hentry;
+	bool		found;
+	Relids		notnullattnums = NULL;
+
+	/* bail out if the relation has no not-null constraints */
+	if (relation->rd_att->constr == NULL ||
+		!relation->rd_att->constr->has_not_null)
+		return;
+
+	/* create the hash table if it hasn't been created yet */
+	if (root->glob->rel_notnullatts_hash == NULL)
+	{
+		HTAB	   *hashtab;
+		HASHCTL		hash_ctl;
+
+		hash_ctl.keysize = sizeof(Oid);
+		hash_ctl.entrysize = sizeof(NotnullHashEntry);
+		hash_ctl.hcxt = CurrentMemoryContext;
+
+		hashtab = hash_create("Relation NOT NULL attnums",
+							  64L,	/* arbitrary initial size */
+							  &hash_ctl,
+							  HASH_ELEM | HASH_BLOBS | HASH_CONTEXT);
+
+		root->glob->rel_notnullatts_hash = hashtab;
+	}
+
+	/*
+	 * Create a hash entry for this relation OID, if we don't have one
+	 * already.
+	 */
+	hentry = (NotnullHashEntry *) hash_search(root->glob->rel_notnullatts_hash,
+											  &relid,
+											  HASH_ENTER,
+											  &found);
+
+	/* bail out if a hash entry already exists for this relation OID */
+	if (found)
+		return;
+
+	/* collect the column not-null constraint information for this relation */
+	for (int i = 0; i < relation->rd_att->natts; i++)
+	{
+		CompactAttribute *attr = TupleDescCompactAttr(relation->rd_att, i);
+
+		Assert(attr->attnullability != ATTNULLABLE_UNKNOWN);
+
+		if (attr->attnullability == ATTNULLABLE_VALID)
+		{
+			notnullattnums = bms_add_member(notnullattnums, i + 1);
+
+			/*
+			 * Per RemoveAttributeById(), dropped columns will have their
+			 * attnotnull unset, so we needn't check for dropped columns in
+			 * the above condition.
+			 */
+			Assert(!attr->attisdropped);
+		}
+	}
+
+	/* ... and initialize the new hash entry */
+	hentry->notnullattnums = notnullattnums;
+}
+
+/*
+ * find_relation_notnullatts -
+ *	  Searches the hash table and returns the column not-null constraint
+ *	  information for a given relation.
+ */
+Relids
+find_relation_notnullatts(PlannerInfo *root, Oid relid)
+{
+	NotnullHashEntry *hentry;
+	bool		found;
+
+	if (root->glob->rel_notnullatts_hash == NULL)
+		return NULL;
+
+	hentry = (NotnullHashEntry *) hash_search(root->glob->rel_notnullatts_hash,
+											  &relid,
+											  HASH_FIND,
+											  &found);
+	if (!found)
+		return NULL;
+
+	return hentry->notnullattnums;
 }
 
 /*
@@ -2288,6 +2373,60 @@ has_row_triggers(PlannerInfo *root, Index rti, CmdType event)
 			if (trigDesc &&
 				(trigDesc->trig_delete_after_row ||
 				 trigDesc->trig_delete_before_row))
+				result = true;
+			break;
+			/* There is no separate event for MERGE, only INSERT/UPDATE/DELETE */
+		case CMD_MERGE:
+			result = false;
+			break;
+		default:
+			elog(ERROR, "unrecognized CmdType: %d", (int) event);
+			break;
+	}
+
+	table_close(relation, NoLock);
+	return result;
+}
+
+/*
+ * has_transition_tables
+ *
+ * Detect whether the specified relation has any transition tables for event.
+ */
+bool
+has_transition_tables(PlannerInfo *root, Index rti, CmdType event)
+{
+	RangeTblEntry *rte = planner_rt_fetch(rti, root);
+	Relation	relation;
+	TriggerDesc *trigDesc;
+	bool		result = false;
+
+	Assert(rte->rtekind == RTE_RELATION);
+
+	/* Currently foreign tables cannot have transition tables */
+	if (rte->relkind == RELKIND_FOREIGN_TABLE)
+		return result;
+
+	/* Assume we already have adequate lock */
+	relation = table_open(rte->relid, NoLock);
+
+	trigDesc = relation->trigdesc;
+	switch (event)
+	{
+		case CMD_INSERT:
+			if (trigDesc &&
+				trigDesc->trig_insert_new_table)
+				result = true;
+			break;
+		case CMD_UPDATE:
+			if (trigDesc &&
+				(trigDesc->trig_update_old_table ||
+				 trigDesc->trig_update_new_table))
+				result = true;
+			break;
+		case CMD_DELETE:
+			if (trigDesc &&
+				trigDesc->trig_delete_old_table)
 				result = true;
 			break;
 			/* There is no separate event for MERGE, only INSERT/UPDATE/DELETE */

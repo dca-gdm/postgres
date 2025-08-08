@@ -1759,6 +1759,7 @@ NonEmptyRange
 Notification
 NotificationList
 NotifyStmt
+NotnullHashEntry
 Nsrt
 NtDllRoutine
 NtFlushBuffersFileEx_t
@@ -2274,6 +2275,7 @@ PlanInvalItem
 PlanRowMark
 PlanState
 PlannedStmt
+PlannedStmtOrigin
 PlannerGlobal
 PlannerInfo
 PlannerParamItem
@@ -2565,6 +2567,8 @@ RestrictInfo
 Result
 ResultRelInfo
 ResultState
+RetainDeadTuplesData
+RetainDeadTuplesPhase
 ReturnSetInfo
 ReturnStmt
 ReturningClause
@@ -3753,6 +3757,7 @@ leafSegmentInfo
 leaf_item
 libpq_gettext_func
 libpq_source
+libpqsrv_PGresult
 line_t
 lineno_t
 list_sort_comparator

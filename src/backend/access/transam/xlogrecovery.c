@@ -1626,6 +1626,7 @@ ShutdownWalRecovery(void)
 		close(readFile);
 		readFile = -1;
 	}
+	pfree(xlogreader->private_data);
 	XLogReaderFree(xlogreader);
 	XLogPrefetcherFree(xlogprefetcher);
 
@@ -4760,7 +4761,7 @@ bool
 check_primary_slot_name(char **newval, void **extra, GucSource source)
 {
 	if (*newval && strcmp(*newval, "") != 0 &&
-		!ReplicationSlotValidateName(*newval, WARNING))
+		!ReplicationSlotValidateName(*newval, false, WARNING))
 		return false;
 
 	return true;

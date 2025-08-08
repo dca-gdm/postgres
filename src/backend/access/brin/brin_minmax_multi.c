@@ -624,7 +624,7 @@ brin_range_serialize(Ranges *range)
 
 		for (i = 0; i < nvalues; i++)
 		{
-			len += VARSIZE_ANY(range->values[i]);
+			len += VARSIZE_ANY(DatumGetPointer(range->values[i]));
 		}
 	}
 	else if (typlen == -2)		/* cstring */
@@ -2032,7 +2032,7 @@ brin_minmax_multi_distance_numeric(PG_FUNCTION_ARGS)
 
 	d = DirectFunctionCall2(numeric_sub, a2, a1);	/* a2 - a1 */
 
-	PG_RETURN_FLOAT8(DirectFunctionCall1(numeric_float8, d));
+	PG_RETURN_DATUM(DirectFunctionCall1(numeric_float8, d));
 }
 
 /*
