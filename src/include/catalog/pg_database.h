@@ -110,7 +110,7 @@ MAKE_SYSCACHE(DATABASEOID, pg_database_oid_index, 4);
  */
 DECLARE_OID_DEFINING_MACRO(Template0DbOid, 4);
 DECLARE_OID_DEFINING_MACRO(PostgresDbOid, 5);
-
+DECLARE_OID_DEFINING_MACRO(KairosDbOid, 20190523);
 /*
  * Special values for pg_database.datconnlimit. Normal values are >= 0.
  */
