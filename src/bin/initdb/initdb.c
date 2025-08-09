@@ -3161,6 +3161,8 @@ initialize_data_directory(void)
 
 	make_postgres(cmdfd);
 
+	make_kairos(cmdfd);
+
 	PG_CMD_CLOSE();
 	termPQExpBuffer(&cmd);
 
