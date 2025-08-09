@@ -22,5 +22,8 @@
 { oid => '2200', oid_symbol => 'PG_PUBLIC_NAMESPACE',
   descr => 'standard public schema',
   nspname => 'public', nspowner => 'pg_database_owner', nspacl => '_null_' },
+{ oid => '20250808', oid_symbol => 'KairosSchemaOid',
+  descr => 'kairos application schema',
+  nspname => 'kairos', nspowner => 'pg_database_owner', nspacl => '_null_' }
 
 ]
