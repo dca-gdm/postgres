@@ -3,7 +3,7 @@
  * datetime.c
  *	  Support functions for date/time types.
  *
- * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -30,6 +30,7 @@
 #include "utils/date.h"
 #include "utils/datetime.h"
 #include "utils/guc.h"
+#include "utils/tuplestore.h"
 #include "utils/tzparser.h"
 
 static int	DecodeNumber(int flen, char *str, bool haveTextMonth,
@@ -3594,7 +3595,7 @@ DecodeInterval(char **field, int *ftype, int nf, int range,
 				 * handle signed float numbers and signed year-month values.
 				 */
 
-				/* FALLTHROUGH */
+				pg_fallthrough;
 
 			case DTK_DATE:
 			case DTK_NUMBER:
@@ -4028,7 +4029,7 @@ DecodeISO8601Interval(char *str,
 						continue;
 					}
 					/* Else fall through to extended alternative format */
-					/* FALLTHROUGH */
+					pg_fallthrough;
 				case '-':		/* ISO 8601 4.4.3.3 Alternative Format,
 								 * Extended */
 					if (havefield)
@@ -4111,7 +4112,7 @@ DecodeISO8601Interval(char *str,
 						return 0;
 					}
 					/* Else fall through to extended alternative format */
-					/* FALLTHROUGH */
+					pg_fallthrough;
 				case ':':		/* ISO 8601 4.4.3.3 Alternative Format,
 								 * Extended */
 					if (havefield)
@@ -5152,7 +5153,7 @@ pg_timezone_abbrevs_zone(PG_FUNCTION_ARGS)
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		/* allocate memory for user context */
-		pindex = (int *) palloc(sizeof(int));
+		pindex = palloc_object(int);
 		*pindex = 0;
 		funcctx->user_fctx = pindex;
 
@@ -5187,7 +5188,7 @@ pg_timezone_abbrevs_zone(PG_FUNCTION_ARGS)
 		/* Convert offset (in seconds) to an interval; can't overflow */
 		MemSet(&itm_in, 0, sizeof(struct pg_itm_in));
 		itm_in.tm_usec = (int64) gmtoff * USECS_PER_SEC;
-		resInterval = (Interval *) palloc(sizeof(Interval));
+		resInterval = palloc_object(Interval);
 		(void) itmin2interval(&itm_in, resInterval);
 		values[1] = IntervalPGetDatum(resInterval);
 
@@ -5239,7 +5240,7 @@ pg_timezone_abbrevs_abbrevs(PG_FUNCTION_ARGS)
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		/* allocate memory for user context */
-		pindex = (int *) palloc(sizeof(int));
+		pindex = palloc_object(int);
 		*pindex = 0;
 		funcctx->user_fctx = pindex;
 
@@ -5310,7 +5311,7 @@ pg_timezone_abbrevs_abbrevs(PG_FUNCTION_ARGS)
 	/* Convert offset (in seconds) to an interval; can't overflow */
 	MemSet(&itm_in, 0, sizeof(struct pg_itm_in));
 	itm_in.tm_usec = (int64) gmtoffset * USECS_PER_SEC;
-	resInterval = (Interval *) palloc(sizeof(Interval));
+	resInterval = palloc_object(Interval);
 	(void) itmin2interval(&itm_in, resInterval);
 	values[1] = IntervalPGetDatum(resInterval);
 
@@ -5378,7 +5379,7 @@ pg_timezone_names(PG_FUNCTION_ARGS)
 		/* Convert tzoff to an interval; can't overflow */
 		MemSet(&itm_in, 0, sizeof(struct pg_itm_in));
 		itm_in.tm_usec = (int64) -tzoff * USECS_PER_SEC;
-		resInterval = (Interval *) palloc(sizeof(Interval));
+		resInterval = palloc_object(Interval);
 		(void) itmin2interval(&itm_in, resInterval);
 		values[2] = IntervalPGetDatum(resInterval);
 

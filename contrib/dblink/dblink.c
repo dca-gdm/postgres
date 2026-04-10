@@ -9,7 +9,7 @@
  * Shridhar Daithankar <shridhar_daithankar@persistent.co.in>
  *
  * contrib/dblink/dblink.c
- * Copyright (c) 2001-2025, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2026, PostgreSQL Global Development Group
  * ALL RIGHTS RESERVED;
  *
  * Permission to use, copy, modify, and distribute this software and its
@@ -59,9 +59,11 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
+#include "utils/hsearch.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+#include "utils/tuplestore.h"
 #include "utils/varlena.h"
 #include "utils/wait_event.h"
 
@@ -881,6 +883,7 @@ materializeResult(FunctionCallInfo fcinfo, PGconn *conn, PGresult *res)
 		tupdesc = CreateTemplateTupleDesc(1);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "status",
 						   TEXTOID, -1, 0);
+		TupleDescFinalize(tupdesc);
 		ntuples = 1;
 		nfields = 1;
 	}
@@ -1044,6 +1047,7 @@ materializeQueryResult(FunctionCallInfo fcinfo,
 			tupdesc = CreateTemplateTupleDesc(1);
 			TupleDescInitEntry(tupdesc, (AttrNumber) 1, "status",
 							   TEXTOID, -1, 0);
+			TupleDescFinalize(tupdesc);
 			attinmeta = TupleDescGetAttInMetadata(tupdesc);
 
 			oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
@@ -1528,6 +1532,8 @@ dblink_get_pkey(PG_FUNCTION_ARGS)
 						   INT4OID, -1, 0);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "colname",
 						   TEXTOID, -1, 0);
+
+		TupleDescFinalize(tupdesc);
 
 		/*
 		 * Generate attribute metadata needed later to produce tuples from raw
@@ -2069,9 +2075,10 @@ get_text_array_contents(ArrayType *array, int *numitems)
 	int16		typlen;
 	bool		typbyval;
 	char		typalign;
+	uint8		typalignby;
 	char	  **values;
 	char	   *ptr;
-	bits8	   *bitmap;
+	uint8	   *bitmap;
 	int			bitmask;
 	int			i;
 
@@ -2081,6 +2088,7 @@ get_text_array_contents(ArrayType *array, int *numitems)
 
 	get_typlenbyvalalign(ARR_ELEMTYPE(array),
 						 &typlen, &typbyval, &typalign);
+	typalignby = typalign_to_alignby(typalign);
 
 	values = palloc_array(char *, nitems);
 
@@ -2098,7 +2106,7 @@ get_text_array_contents(ArrayType *array, int *numitems)
 		{
 			values[i] = TextDatumGetCString(PointerGetDatum(ptr));
 			ptr = att_addlength_pointer(ptr, typlen, ptr);
-			ptr = (char *) att_align_nominal(ptr, typalign);
+			ptr = (char *) att_nominal_alignby(ptr, typalignby);
 		}
 
 		/* advance bitmap pointer if any */
@@ -2460,6 +2468,21 @@ get_tuple_of_interest(Relation rel, int *pkattnums, int pknumatts, char **src_pk
 	return NULL;
 }
 
+static void
+RangeVarCallbackForDblink(const RangeVar *relation,
+						  Oid relId, Oid oldRelId, void *arg)
+{
+	AclResult	aclresult;
+
+	if (!OidIsValid(relId))
+		return;
+
+	aclresult = pg_class_aclcheck(relId, GetUserId(), *((AclMode *) arg));
+	if (aclresult != ACLCHECK_OK)
+		aclcheck_error(aclresult, get_relkind_objtype(get_rel_relkind(relId)),
+					   relation->relname);
+}
+
 /*
  * Open the relation named by relname_text, acquire specified type of lock,
  * verify we have specified permissions.
@@ -2469,19 +2492,13 @@ static Relation
 get_rel_from_relname(text *relname_text, LOCKMODE lockmode, AclMode aclmode)
 {
 	RangeVar   *relvar;
-	Relation	rel;
-	AclResult	aclresult;
+	Oid			relid;
 
 	relvar = makeRangeVarFromNameList(textToQualifiedNameList(relname_text));
-	rel = table_openrv(relvar, lockmode);
+	relid = RangeVarGetRelidExtended(relvar, lockmode, 0,
+									 RangeVarCallbackForDblink, &aclmode);
 
-	aclresult = pg_class_aclcheck(RelationGetRelid(rel), GetUserId(),
-								  aclmode);
-	if (aclresult != ACLCHECK_OK)
-		aclcheck_error(aclresult, get_relkind_objtype(rel->rd_rel->relkind),
-					   RelationGetRelationName(rel));
-
-	return rel;
+	return table_open(relid, NoLock);
 }
 
 /*
@@ -2643,7 +2660,7 @@ dblink_connstr_has_required_scram_options(const char *connstr)
 		PQconninfoFree(options);
 	}
 
-	has_scram_keys = has_scram_client_key && has_scram_server_key && MyProcPort->has_scram_keys;
+	has_scram_keys = has_scram_client_key && has_scram_server_key && MyProcPort != NULL && MyProcPort->has_scram_keys;
 
 	return (has_scram_keys && has_require_auth);
 }
@@ -2676,7 +2693,7 @@ dblink_security_check(PGconn *conn, const char *connname, const char *connstr)
 	 * only added if UseScramPassthrough is set, and the user is not allowed
 	 * to add the SCRAM keys on fdw and user mapping options.
 	 */
-	if (MyProcPort->has_scram_keys && dblink_connstr_has_required_scram_options(connstr))
+	if (MyProcPort != NULL && MyProcPort->has_scram_keys && dblink_connstr_has_required_scram_options(connstr))
 		return;
 
 #ifdef ENABLE_GSS
@@ -2749,7 +2766,7 @@ dblink_connstr_check(const char *connstr)
 	if (dblink_connstr_has_pw(connstr))
 		return;
 
-	if (MyProcPort->has_scram_keys && dblink_connstr_has_required_scram_options(connstr))
+	if (MyProcPort != NULL && MyProcPort->has_scram_keys && dblink_connstr_has_required_scram_options(connstr))
 		return;
 
 #ifdef ENABLE_GSS
@@ -2896,7 +2913,7 @@ get_connect_string(const char *servername)
 		 * the user overwrites these options we can ereport on
 		 * dblink_connstr_check and dblink_security_check.
 		 */
-		if (MyProcPort->has_scram_keys && UseScramPassthrough(foreign_server, user_mapping))
+		if (MyProcPort != NULL && MyProcPort->has_scram_keys && UseScramPassthrough(foreign_server, user_mapping))
 			appendSCRAMKeysInfo(&buf);
 
 		foreach(cell, fdw->options)
@@ -3011,7 +3028,7 @@ validate_pkattnums(Relation rel,
 		for (j = 0; j < natts; j++)
 		{
 			/* dropped columns don't count */
-			if (TupleDescAttr(tupdesc, j)->attisdropped)
+			if (TupleDescCompactAttr(tupdesc, j)->attisdropped)
 				continue;
 
 			if (++lnum == pkattnum)

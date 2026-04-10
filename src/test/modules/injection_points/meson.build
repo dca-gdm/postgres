@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2025, PostgreSQL Global Development Group
+# Copyright (c) 2022-2026, PostgreSQL Global Development Group
 
 if not get_option('injection_points')
   subdir_done()
@@ -6,8 +6,6 @@ endif
 
 injection_points_sources = files(
   'injection_points.c',
-  'injection_stats.c',
-  'injection_stats_fixed.c',
   'regress_injection.c',
 )
 
@@ -47,16 +45,17 @@ tests += {
     'specs': [
       'basic',
       'inplace',
+      'repack',
+      'repack_toast',
       'syscache-update-pruned',
+      'heap_lock_update',
     ],
     'runningcheck': false, # see syscache-update-pruned
-  },
-  'tap': {
-    'env': {
-      'enable_injection_points': get_option('injection_points') ? 'yes' : 'no',
-    },
-    'tests': [
-      't/001_stats.pl',
+    # Some tests wait for all snapshots, so avoid parallel execution
+    'runningcheck-parallel': false,
+    # some tests require wal_level=replica
+    'regress_args': [
+      '--temp-config', files('extra.conf'),
     ],
   },
 }

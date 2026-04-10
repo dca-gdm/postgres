@@ -6,7 +6,7 @@
  * Injection points can be used to run arbitrary code by attaching callbacks
  * that would be executed in place of the named injection point.
  *
- * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -28,6 +28,7 @@
 #include "storage/fd.h"
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
+#include "storage/subsystems.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 
@@ -109,6 +110,9 @@ typedef struct InjectionPointCacheEntry
 
 static HTAB *InjectionPointCache = NULL;
 
+static void InjectionPointShmemRequest(void *arg);
+static void InjectionPointShmemInit(void *arg);
+
 /*
  * injection_point_cache_add
  *
@@ -186,7 +190,7 @@ injection_point_cache_load(InjectionPointEntry *entry, int slot_idx, uint64 gene
 		elog(ERROR, "could not find library \"%s\" for injection point \"%s\"",
 			 path, entry->name);
 
-	injection_callback_local = (void *)
+	injection_callback_local =
 		load_external_function(path, entry->function, false, NULL);
 
 	if (injection_callback_local == NULL)
@@ -224,47 +228,32 @@ injection_point_cache_get(const char *name)
 
 	return NULL;
 }
+
+const ShmemCallbacks InjectionPointShmemCallbacks = {
+	.request_fn = InjectionPointShmemRequest,
+	.init_fn = InjectionPointShmemInit,
+};
+
+/*
+ * Reserve space for the dynamic shared hash table
+ */
+static void
+InjectionPointShmemRequest(void *arg)
+{
+	ShmemRequestStruct(.name = "InjectionPoint hash",
+					   .size = sizeof(InjectionPointsCtl),
+					   .ptr = (void **) &ActiveInjectionPoints,
+		);
+}
+
+static void
+InjectionPointShmemInit(void *arg)
+{
+	pg_atomic_init_u32(&ActiveInjectionPoints->max_inuse, 0);
+	for (int i = 0; i < MAX_INJECTION_POINTS; i++)
+		pg_atomic_init_u64(&ActiveInjectionPoints->entries[i].generation, 0);
+}
 #endif							/* USE_INJECTION_POINTS */
-
-/*
- * Return the space for dynamic shared hash table.
- */
-Size
-InjectionPointShmemSize(void)
-{
-#ifdef USE_INJECTION_POINTS
-	Size		sz = 0;
-
-	sz = add_size(sz, sizeof(InjectionPointsCtl));
-	return sz;
-#else
-	return 0;
-#endif
-}
-
-/*
- * Allocate shmem space for dynamic shared hash.
- */
-void
-InjectionPointShmemInit(void)
-{
-#ifdef USE_INJECTION_POINTS
-	bool		found;
-
-	ActiveInjectionPoints = ShmemInitStruct("InjectionPoint hash",
-											sizeof(InjectionPointsCtl),
-											&found);
-	if (!IsUnderPostmaster)
-	{
-		Assert(!found);
-		pg_atomic_init_u32(&ActiveInjectionPoints->max_inuse, 0);
-		for (int i = 0; i < MAX_INJECTION_POINTS; i++)
-			pg_atomic_init_u64(&ActiveInjectionPoints->entries[i].generation, 0);
-	}
-	else
-		Assert(found);
-#endif
-}
 
 /*
  * Attach a new injection point.
@@ -283,16 +272,16 @@ InjectionPointAttach(const char *name,
 	int			free_idx;
 
 	if (strlen(name) >= INJ_NAME_MAXLEN)
-		elog(ERROR, "injection point name %s too long (maximum of %u)",
-			 name, INJ_NAME_MAXLEN);
+		elog(ERROR, "injection point name %s too long (maximum of %u characters)",
+			 name, INJ_NAME_MAXLEN - 1);
 	if (strlen(library) >= INJ_LIB_MAXLEN)
-		elog(ERROR, "injection point library %s too long (maximum of %u)",
-			 library, INJ_LIB_MAXLEN);
+		elog(ERROR, "injection point library %s too long (maximum of %u characters)",
+			 library, INJ_LIB_MAXLEN - 1);
 	if (strlen(function) >= INJ_FUNC_MAXLEN)
-		elog(ERROR, "injection point function %s too long (maximum of %u)",
-			 function, INJ_FUNC_MAXLEN);
-	if (private_data_size >= INJ_PRIVATE_MAXLEN)
-		elog(ERROR, "injection point data too long (maximum of %u)",
+		elog(ERROR, "injection point function %s too long (maximum of %u characters)",
+			 function, INJ_FUNC_MAXLEN - 1);
+	if (private_data_size > INJ_PRIVATE_MAXLEN)
+		elog(ERROR, "injection point data too long (maximum of %u bytes)",
 			 INJ_PRIVATE_MAXLEN);
 
 	/*
@@ -331,11 +320,8 @@ InjectionPointAttach(const char *name,
 
 	/* Save the entry */
 	strlcpy(entry->name, name, sizeof(entry->name));
-	entry->name[INJ_NAME_MAXLEN - 1] = '\0';
 	strlcpy(entry->library, library, sizeof(entry->library));
-	entry->library[INJ_LIB_MAXLEN - 1] = '\0';
 	strlcpy(entry->function, function, sizeof(entry->function));
-	entry->function[INJ_FUNC_MAXLEN - 1] = '\0';
 	if (private_data != NULL)
 		memcpy(entry->private_data, private_data, private_data_size);
 
@@ -614,7 +600,7 @@ InjectionPointList(void)
 		if (generation % 2 == 0)
 			continue;
 
-		inj_point = (InjectionPointData *) palloc0(sizeof(InjectionPointData));
+		inj_point = palloc0_object(InjectionPointData);
 		inj_point->name = pstrdup(entry->name);
 		inj_point->library = pstrdup(entry->library);
 		inj_point->function = pstrdup(entry->function);

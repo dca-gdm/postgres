@@ -1,5 +1,5 @@
 
-# Copyright (c) 2023-2025, PostgreSQL Global Development Group
+# Copyright (c) 2023-2026, PostgreSQL Global Development Group
 
 # Test logical replication slots are always flushed to disk during a shutdown
 # checkpoint.
@@ -48,6 +48,7 @@ $node_publisher->append_conf(
 	'postgresql.conf', q{
 checkpoint_timeout = 1h
 autovacuum = off
+log_min_messages = 'debug1'
 });
 $node_publisher->start;
 

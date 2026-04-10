@@ -7,7 +7,7 @@
  * from pgstat.c to enforce the line between the statistics access / storage
  * implementation and the details about individual types of statistics.
  *
- * Copyright (c) 2021-2025, PostgreSQL Global Development Group
+ * Copyright (c) 2021-2026, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/activity/pgstat_io.c
@@ -362,6 +362,8 @@ pgstat_tracks_io_bktype(BackendType bktype)
 		case B_LOGGER:
 			return false;
 
+		case B_DATACHECKSUMSWORKER_LAUNCHER:
+		case B_DATACHECKSUMSWORKER_WORKER:
 		case B_AUTOVAC_LAUNCHER:
 		case B_AUTOVAC_WORKER:
 		case B_BACKEND:

@@ -3,7 +3,7 @@
  * readfuncs.c
  *	  Reader functions for Postgres tree nodes.
  *
- * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -25,8 +25,6 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
-
-#include <math.h>
 
 #include "miscadmin.h"
 #include "nodes/bitmapset.h"
@@ -425,6 +423,15 @@ _readRangeTblEntry(void)
 			/* we re-use these RELATION fields, too: */
 			READ_OID_FIELD(relid);
 			break;
+		case RTE_GRAPH_TABLE:
+			READ_NODE_FIELD(graph_pattern);
+			READ_NODE_FIELD(graph_table_columns);
+			/* we re-use these RELATION fields, too: */
+			READ_OID_FIELD(relid);
+			READ_CHAR_FIELD(relkind);
+			READ_INT_FIELD(rellockmode);
+			READ_UINT_FIELD(perminfoindex);
+			break;
 		case RTE_RESULT:
 			/* no extra fields */
 			break;
@@ -599,8 +606,7 @@ parseNodeString(void)
 Datum
 readDatum(bool typbyval)
 {
-	Size		length,
-				i;
+	Size		length;
 	int			tokenLength;
 	const char *token;
 	Datum		res;
@@ -623,18 +629,18 @@ readDatum(bool typbyval)
 			elog(ERROR, "byval datum but length = %zu", length);
 		res = (Datum) 0;
 		s = (char *) (&res);
-		for (i = 0; i < (Size) sizeof(Datum); i++)
+		for (Size i = 0; i < (Size) sizeof(Datum); i++)
 		{
 			token = pg_strtok(&tokenLength);
 			s[i] = (char) atoi(token);
 		}
 	}
 	else if (length <= 0)
-		res = (Datum) NULL;
+		res = (Datum) 0;
 	else
 	{
 		s = (char *) palloc(length);
-		for (i = 0; i < length; i++)
+		for (Size i = 0; i < length; i++)
 		{
 			token = pg_strtok(&tokenLength);
 			s[i] = (char) atoi(token);

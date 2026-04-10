@@ -8,7 +8,7 @@
 # - readfuncs
 # - outfuncs
 #
-# Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/backend/nodes/gen_node_support.pl
@@ -135,7 +135,7 @@ my @nodetag_only;
 
 # types that are copied by straight assignment
 my @scalar_types = qw(
-  bits32 bool char double int int8 int16 int32 int64 long uint8 uint16 uint32 uint64
+  bool char double int int8 int16 int32 int64 long uint8 uint16 uint32 uint64
   AclMode AttrNumber Cardinality Cost Index Oid RelFileNumber Selectivity Size StrategyNumber SubTransactionId TimeLineID XLogRecPtr
 );
 
@@ -591,7 +591,7 @@ my $header_comment =
  * %s
  *    Generated node infrastructure code
  *
- * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -1031,7 +1031,6 @@ _read${n}(void)
 			print $rff "\tREAD_INT_FIELD($f);\n" unless $no_read;
 		}
 		elsif ($t eq 'uint32'
-			|| $t eq 'bits32'
 			|| $t eq 'BlockNumber'
 			|| $t eq 'Index'
 			|| $t eq 'SubTransactionId')

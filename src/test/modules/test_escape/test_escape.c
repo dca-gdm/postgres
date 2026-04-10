@@ -1,7 +1,7 @@
 /*
  * test_escape.c Test escape functions
  *
- * Copyright (c) 2022-2025, PostgreSQL Global Development Group
+ * Copyright (c) 2022-2026, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		src/test/modules/test_escape/test_escape.c
@@ -525,8 +525,6 @@ static pe_test_vector pe_test_vectors[] =
 	TV("gbk", "\x80'"),
 	TV("gbk", "\x80\""),
 	TV("gbk", "\x80\\"),
-
-	TV("mule_internal", "\\\x9c';\0;"),
 
 	TV("sql_ascii", "1\xC0'"),
 

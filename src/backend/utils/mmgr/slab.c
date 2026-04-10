@@ -8,7 +8,7 @@
  * with minimal memory wastage and fragmentation.
  *
  *
- * Portions Copyright (c) 2017-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2017-2026, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/mmgr/slab.c
@@ -193,14 +193,14 @@ typedef struct SlabBlock
  * SlabIsValid
  *		True iff set is a valid slab allocation set.
  */
-#define SlabIsValid(set) (PointerIsValid(set) && IsA(set, SlabContext))
+#define SlabIsValid(set) ((set) && IsA(set, SlabContext))
 
 /*
  * SlabBlockIsValid
  *		True iff block is a valid block of slab allocation set.
  */
 #define SlabBlockIsValid(block) \
-	(PointerIsValid(block) && SlabIsValid((block)->slab))
+	((block) && SlabIsValid((block)->slab))
 
 /*
  * SlabBlocklistIndex
@@ -539,6 +539,7 @@ SlabAllocSetupNewChunk(MemoryContext context, SlabBlock *block,
 	MemoryChunkSetHdrMask(chunk, block, MAXALIGN(slab->chunkSize), MCTX_SLAB_ID);
 
 #ifdef MEMORY_CONTEXT_CHECKING
+	chunk->requested_size = size;
 	/* slab mark to catch clobber of "unused" space */
 	Assert(slab->chunkSize < (slab->fullChunkSize - Slab_CHUNKHDRSZ));
 	set_sentinel(MemoryChunkGetPointer(chunk), size);
@@ -628,8 +629,8 @@ SlabAllocFromNewBlock(MemoryContext context, Size size, int flags)
  *		to setup the stack frame in SlabAlloc.  For performance reasons, we
  *		want to avoid that.
  */
-pg_noinline
 pg_noreturn
+pg_noinline
 static void
 SlabAllocInvalidSize(MemoryContext context, Size size)
 {
@@ -748,11 +749,18 @@ SlabFree(void *pointer)
 	slab = block->slab;
 
 #ifdef MEMORY_CONTEXT_CHECKING
+	/* See comments in AllocSetFree about uses of ERROR and WARNING here */
+	/* Test for previously-freed chunk */
+	if (unlikely(chunk->requested_size == InvalidAllocSize))
+		elog(ERROR, "detected double pfree in %s %p",
+			 slab->header.name, chunk);
 	/* Test for someone scribbling on unused space in chunk */
 	Assert(slab->chunkSize < (slab->fullChunkSize - Slab_CHUNKHDRSZ));
 	if (!sentinel_ok(pointer, slab->chunkSize))
 		elog(WARNING, "detected write past chunk end in %s %p",
 			 slab->header.name, chunk);
+	/* Reset requested_size to InvalidAllocSize in free chunks */
+	chunk->requested_size = InvalidAllocSize;
 #endif
 
 	/* push this chunk onto the head of the block's free list */

@@ -12,7 +12,7 @@
  * identifying statement boundaries in multi-statement source strings.
  *
  *
- * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/parsenodes.h
@@ -147,6 +147,9 @@ typedef struct Query
 	 */
 	int			resultRelation pg_node_attr(query_jumble_ignore);
 
+	/* FOR PORTION OF clause for UPDATE/DELETE */
+	ForPortionOfExpr *forPortionOf;
+
 	/* has aggregates in tlist or havingQual */
 	bool		hasAggs pg_node_attr(query_jumble_ignore);
 	/* has window functions in tlist */
@@ -200,7 +203,7 @@ typedef struct Query
 	/* OVERRIDING clause */
 	OverridingKind override pg_node_attr(query_jumble_ignore);
 
-	OnConflictExpr *onConflict; /* ON CONFLICT DO [NOTHING | UPDATE] */
+	OnConflictExpr *onConflict; /* ON CONFLICT DO NOTHING/SELECT/UPDATE */
 
 	/*
 	 * The following three fields describe the contents of the RETURNING list
@@ -214,7 +217,8 @@ typedef struct Query
 	List	   *returningList;	/* return-values list (of TargetEntry) */
 
 	List	   *groupClause;	/* a list of SortGroupClause's */
-	bool		groupDistinct;	/* is the group by clause distinct? */
+	bool		groupDistinct;	/* was GROUP BY DISTINCT used? */
+	bool		groupByAll;		/* was GROUP BY ALL used? */
 
 	List	   *groupingSets;	/* a list of GroupingSet's if present */
 
@@ -452,6 +456,7 @@ typedef struct FuncCall
 	List	   *agg_order;		/* ORDER BY (list of SortBy) */
 	Node	   *agg_filter;		/* FILTER clause, if any */
 	struct WindowDef *over;		/* OVER clause, if any */
+	int			ignore_nulls;	/* ignore nulls for window function */
 	bool		agg_within_group;	/* ORDER BY appeared in WITHIN GROUP */
 	bool		agg_star;		/* argument was really '*' */
 	bool		agg_distinct;	/* arguments were labeled DISTINCT */
@@ -709,6 +714,19 @@ typedef struct RangeTableFuncCol
 } RangeTableFuncCol;
 
 /*
+ * RangeGraphTable - raw form of GRAPH_TABLE clause
+ */
+typedef struct RangeGraphTable
+{
+	NodeTag		type;
+	RangeVar   *graph_name;
+	struct GraphPattern *graph_pattern;
+	List	   *columns;
+	Alias	   *alias;			/* table alias & optional column aliases */
+	ParseLoc	location;		/* token location, or -1 if unknown */
+} RangeGraphTable;
+
+/*
  * RangeTableSample - TABLESAMPLE appearing in a raw FROM clause
  *
  * This node, appearing only in raw parse trees, represents
@@ -778,7 +796,7 @@ typedef struct TableLikeClause
 {
 	NodeTag		type;
 	RangeVar   *relation;
-	bits32		options;		/* OR of TableLikeOption flags */
+	uint32		options;		/* OR of TableLikeOption flags */
 	Oid			relationOid;	/* If table has been looked up, its OID */
 } TableLikeClause;
 
@@ -814,6 +832,7 @@ typedef struct IndexElem
 	List	   *opclassopts;	/* opclass-specific options, or NIL */
 	SortByDir	ordering;		/* ASC/DESC/default */
 	SortByNulls nulls_ordering; /* FIRST/LAST/default */
+	ParseLoc	location;		/* token location, or -1 if unknown */
 } IndexElem;
 
 /*
@@ -964,15 +983,77 @@ typedef struct PartitionRangeDatum
 } PartitionRangeDatum;
 
 /*
- * PartitionCmd - info for ALTER TABLE/INDEX ATTACH/DETACH PARTITION commands
+ * PartitionDesc - info about a single partition for the ALTER TABLE SPLIT
+ *	  PARTITION command
+ */
+typedef struct SinglePartitionSpec
+{
+	NodeTag		type;
+
+	RangeVar   *name;			/* name of partition */
+	PartitionBoundSpec *bound;	/* FOR VALUES, if attaching */
+} SinglePartitionSpec;
+
+/*
+ * PartitionCmd - info for ALTER TABLE/INDEX ATTACH/DETACH PARTITION and for
+ *	  ALTER TABLE SPLIT/MERGE PARTITION(S) commands
  */
 typedef struct PartitionCmd
 {
 	NodeTag		type;
-	RangeVar   *name;			/* name of partition to attach/detach */
-	PartitionBoundSpec *bound;	/* FOR VALUES, if attaching */
+
+	/* name of partition to attach/detach/merge/split */
+	RangeVar   *name;
+
+	/* FOR VALUES, if attaching */
+	PartitionBoundSpec *bound;
+
+	/*
+	 * list of partitions to be split/merged, used in ALTER TABLE MERGE
+	 * PARTITIONS and ALTER TABLE SPLIT PARTITIONS. For merge partitions,
+	 * partlist is a list of RangeVar; For split partition, it is a list of
+	 * SinglePartitionSpec.
+	 */
+	List	   *partlist;
+
 	bool		concurrent;
 } PartitionCmd;
+
+/*
+ * Nodes for graph pattern
+ */
+
+typedef struct GraphPattern
+{
+	NodeTag		type;
+	List	   *path_pattern_list;
+	Node	   *whereClause;
+} GraphPattern;
+
+typedef enum GraphElementPatternKind
+{
+	VERTEX_PATTERN,
+	EDGE_PATTERN_LEFT,
+	EDGE_PATTERN_RIGHT,
+	EDGE_PATTERN_ANY,
+	PAREN_EXPR,
+} GraphElementPatternKind;
+
+#define IS_EDGE_PATTERN(kind) ((kind) == EDGE_PATTERN_ANY || \
+							   (kind) == EDGE_PATTERN_RIGHT || \
+							   (kind) == EDGE_PATTERN_LEFT)
+
+typedef struct GraphElementPattern
+{
+	NodeTag		type;
+	GraphElementPatternKind kind;
+	const char *variable;
+	Node	   *labelexpr;
+	List	   *subexpr;
+	Node	   *whereClause;
+	List	   *quantifier;
+	ParseLoc	location;
+} GraphElementPattern;
 
 /****************************************************************************
  *	Nodes for a Query tree
@@ -1046,6 +1127,7 @@ typedef enum RTEKind
 	RTE_VALUES,					/* VALUES (<exprlist>), (<exprlist>), ... */
 	RTE_CTE,					/* common table expr (WITH list element) */
 	RTE_NAMEDTUPLESTORE,		/* tuplestore, e.g. for AFTER triggers */
+	RTE_GRAPH_TABLE,			/* GRAPH_TABLE clause */
 	RTE_RESULT,					/* RTE represents an empty FROM clause; such
 								 * RTEs are added by the planner, they're not
 								 * present during parsing or rewriting */
@@ -1189,7 +1271,7 @@ typedef struct RangeTblEntry
 
 	/*
 	 * join_using_alias is an alias clause attached directly to JOIN/USING. It
-	 * is different from the alias field (below) in that it does not hide the
+	 * is different from the alias field (above) in that it does not hide the
 	 * range variables of the tables being joined.
 	 */
 	Alias	   *join_using_alias pg_node_attr(query_jumble_ignore);
@@ -1211,6 +1293,12 @@ typedef struct RangeTblEntry
 	 * Fields valid for a TableFunc RTE (else NULL):
 	 */
 	TableFunc  *tablefunc;
+
+	/*
+	 * Fields valid for a graph table RTE (else NULL):
+	 */
+	GraphPattern *graph_pattern;
+	List	   *graph_table_columns;
 
 	/*
 	 * Fields valid for a values RTE (else NIL):
@@ -1265,7 +1353,7 @@ typedef struct RangeTblEntry
 	 * Fields valid for a GROUP RTE (else NIL):
 	 */
 	/* list of grouping expressions */
-	List	   *groupexprs pg_node_attr(query_jumble_ignore);
+	List	   *groupexprs;
 
 	/*
 	 * Fields valid in all RTEs:
@@ -1388,7 +1476,8 @@ typedef enum WCOKind
 	WCO_VIEW_CHECK,				/* WCO on an auto-updatable view */
 	WCO_RLS_INSERT_CHECK,		/* RLS INSERT WITH CHECK policy */
 	WCO_RLS_UPDATE_CHECK,		/* RLS UPDATE WITH CHECK policy */
-	WCO_RLS_CONFLICT_CHECK,		/* RLS ON CONFLICT DO UPDATE USING policy */
+	WCO_RLS_CONFLICT_CHECK,		/* RLS ON CONFLICT DO SELECT/UPDATE USING
+								 * policy */
 	WCO_RLS_MERGE_UPDATE_CHECK, /* RLS MERGE UPDATE USING policy */
 	WCO_RLS_MERGE_DELETE_CHECK, /* RLS MERGE DELETE USING policy */
 } WCOKind;
@@ -1612,6 +1701,22 @@ typedef struct RowMarkClause
 } RowMarkClause;
 
 /*
+ * ForPortionOfClause
+ *		representation of FOR PORTION OF <range-name> FROM <target-start> TO
+ *		<target-end> or FOR PORTION OF <range-name> (<target>)
+ */
+typedef struct ForPortionOfClause
+{
+	NodeTag		type;
+	char	   *range_name;		/* column name of the range/multirange */
+	ParseLoc	location;		/* token location, or -1 if unknown */
+	ParseLoc	target_location;	/* token location, or -1 if unknown */
+	Node	   *target;			/* Expr from FOR PORTION OF col (...) syntax */
+	Node	   *target_start;	/* Expr from FROM ... TO ... syntax */
+	Node	   *target_end;		/* Expr from FROM ... TO ... syntax */
+} ForPortionOfClause;
+
+/*
  * WithClause -
  *	   representation of WITH clause
  *
@@ -1650,9 +1755,10 @@ typedef struct InferClause
 typedef struct OnConflictClause
 {
 	NodeTag		type;
-	OnConflictAction action;	/* DO NOTHING or UPDATE? */
+	OnConflictAction action;	/* DO NOTHING, SELECT, or UPDATE */
 	InferClause *infer;			/* Optional index inference clause */
-	List	   *targetList;		/* the target list (of ResTarget) */
+	LockClauseStrength lockStrength;	/* lock strength for DO SELECT */
+	List	   *targetList;		/* target list (of ResTarget) for DO UPDATE */
 	Node	   *whereClause;	/* qualifications */
 	ParseLoc	location;		/* token location, or -1 if unknown */
 } OnConflictClause;
@@ -2124,6 +2230,7 @@ typedef struct DeleteStmt
 	Node	   *whereClause;	/* qualifications */
 	ReturningClause *returningClause;	/* RETURNING clause */
 	WithClause *withClause;		/* WITH clause */
+	ForPortionOfClause *forPortionOf;	/* FOR PORTION OF clause */
 } DeleteStmt;
 
 /* ----------------------
@@ -2139,6 +2246,7 @@ typedef struct UpdateStmt
 	List	   *fromClause;		/* optional from clause for more tables */
 	ReturningClause *returningClause;	/* RETURNING clause */
 	WithClause *withClause;		/* WITH clause */
+	ForPortionOfClause *forPortionOf;	/* FOR PORTION OF clause */
 } UpdateStmt;
 
 /* ----------------------
@@ -2192,6 +2300,7 @@ typedef struct SelectStmt
 	Node	   *whereClause;	/* WHERE qualification */
 	List	   *groupClause;	/* GROUP BY clauses */
 	bool		groupDistinct;	/* Is this GROUP BY DISTINCT? */
+	bool		groupByAll;		/* Is this GROUP BY ALL? */
 	Node	   *havingClause;	/* HAVING conditional-expression */
 	List	   *windowClause;	/* WINDOW window_name AS (...), ... */
 
@@ -2349,6 +2458,7 @@ typedef enum ObjectType
 	OBJECT_PARAMETER_ACL,
 	OBJECT_POLICY,
 	OBJECT_PROCEDURE,
+	OBJECT_PROPGRAPH,
 	OBJECT_PUBLICATION,
 	OBJECT_PUBLICATION_NAMESPACE,
 	OBJECT_PUBLICATION_REL,
@@ -2473,6 +2583,8 @@ typedef enum AlterTableType
 	AT_AttachPartition,			/* ATTACH PARTITION */
 	AT_DetachPartition,			/* DETACH PARTITION */
 	AT_DetachPartitionFinalize, /* DETACH PARTITION FINALIZE */
+	AT_SplitPartition,			/* SPLIT PARTITION */
+	AT_MergePartitions,			/* MERGE PARTITIONS */
 	AT_AddIdentity,				/* ADD IDENTITY */
 	AT_SetIdentity,				/* SET identity column options */
 	AT_DropIdentity,			/* DROP IDENTITY */
@@ -2581,7 +2693,7 @@ typedef struct GrantStmt
 	/* privileges == NIL denotes ALL PRIVILEGES */
 	List	   *grantees;		/* list of RoleSpec nodes */
 	bool		grant_option;	/* grant or revoke grant option */
-	RoleSpec   *grantor;
+	RoleSpec   *grantor;		/* GRANTED BY clause, or NULL if none */
 	DropBehavior behavior;		/* drop behavior (for REVOKE) */
 } GrantStmt;
 
@@ -2631,7 +2743,7 @@ typedef struct AccessPriv
  * Note: because of the parsing ambiguity with the GRANT <privileges>
  * statement, granted_roles is a list of AccessPriv; the execution code
  * should complain if any column lists appear.  grantee_roles is a list
- * of role names, as String values.
+ * of role names, as RoleSpec values.
  * ----------------------
  */
 typedef struct GrantRoleStmt
@@ -3949,18 +4061,6 @@ typedef struct AlterSystemStmt
 } AlterSystemStmt;
 
 /* ----------------------
- *		Cluster Statement (support pbrown's cluster index implementation)
- * ----------------------
- */
-typedef struct ClusterStmt
-{
-	NodeTag		type;
-	RangeVar   *relation;		/* relation being indexed, or NULL if all */
-	char	   *indexname;		/* original index defined */
-	List	   *params;			/* list of DefElem nodes */
-} ClusterStmt;
-
-/* ----------------------
  *		Vacuum and Analyze Statements
  *
  * Even though these are nominally two statements, it's convenient to use
@@ -3972,7 +4072,7 @@ typedef struct VacuumStmt
 	NodeTag		type;
 	List	   *options;		/* list of DefElem nodes */
 	List	   *rels;			/* list of VacuumRelation, or NIL for all */
-	bool		is_vacuumcmd;	/* true for VACUUM, false for ANALYZE */
+	bool		is_vacuumcmd;	/* true for VACUUM, false otherwise */
 } VacuumStmt;
 
 /*
@@ -3989,6 +4089,27 @@ typedef struct VacuumRelation
 	Oid			oid;			/* table's OID; InvalidOid if not looked up */
 	List	   *va_cols;		/* list of column names, or NIL for all */
 } VacuumRelation;
+
+/* ----------------------
+ *		Repack Statement
+ * ----------------------
+ */
+typedef enum RepackCommand
+{
+	REPACK_COMMAND_CLUSTER = 1,
+	REPACK_COMMAND_REPACK,
+	REPACK_COMMAND_VACUUMFULL,
+} RepackCommand;
+
+typedef struct RepackStmt
+{
+	NodeTag		type;
+	RepackCommand command;		/* type of command being run */
+	VacuumRelation *relation;	/* relation being repacked */
+	char	   *indexname;		/* order tuples by this index */
+	bool		usingindex;		/* whether USING INDEX is specified */
+	List	   *params;			/* list of DefElem nodes */
+} RepackStmt;
 
 /* ----------------------
  *		Explain Statement
@@ -4144,6 +4265,88 @@ typedef struct CreateCastStmt
 } CreateCastStmt;
 
 /* ----------------------
+ *	CREATE PROPERTY GRAPH Statement
+ * ----------------------
+ */
+typedef struct CreatePropGraphStmt
+{
+	NodeTag		type;
+	RangeVar   *pgname;
+	List	   *vertex_tables;
+	List	   *edge_tables;
+} CreatePropGraphStmt;
+
+typedef struct PropGraphVertex
+{
+	NodeTag		type;
+	RangeVar   *vtable;
+	List	   *vkey;
+	List	   *labels;
+	ParseLoc	location;
+} PropGraphVertex;
+
+typedef struct PropGraphEdge
+{
+	NodeTag		type;
+	RangeVar   *etable;
+	List	   *ekey;
+	List	   *esrckey;
+	char	   *esrcvertex;
+	List	   *esrcvertexcols;
+	List	   *edestkey;
+	char	   *edestvertex;
+	List	   *edestvertexcols;
+	List	   *labels;
+	ParseLoc	location;
+} PropGraphEdge;
+
+typedef struct PropGraphLabelAndProperties
+{
+	NodeTag		type;
+	const char *label;
+	struct PropGraphProperties *properties;
+	ParseLoc	location;
+} PropGraphLabelAndProperties;
+
+typedef struct PropGraphProperties
+{
+	NodeTag		type;
+	List	   *properties;
+	bool		all;
+	ParseLoc	location;
+} PropGraphProperties;
+
+/* ----------------------
+ *	ALTER PROPERTY GRAPH Statement
+ * ----------------------
+ */
+
+typedef enum AlterPropGraphElementKind
+{
+	PROPGRAPH_ELEMENT_KIND_VERTEX = 1,
+	PROPGRAPH_ELEMENT_KIND_EDGE = 2,
+} AlterPropGraphElementKind;
+
+typedef struct AlterPropGraphStmt
+{
+	NodeTag		type;
+	RangeVar   *pgname;
+	bool		missing_ok;
+	List	   *add_vertex_tables;
+	List	   *add_edge_tables;
+	List	   *drop_vertex_tables;
+	List	   *drop_edge_tables;
+	DropBehavior drop_behavior;
+	AlterPropGraphElementKind element_kind;
+	const char *element_alias;
+	List	   *add_labels;
+	const char *drop_label;
+	const char *alter_label;
+	PropGraphProperties *add_properties;
+	List	   *drop_properties;
+} AlterPropGraphStmt;
+
+/* ----------------------
  *	CREATE TRANSFORM Statement
  * ----------------------
  */
@@ -4265,9 +4468,10 @@ typedef struct AlterTSConfigurationStmt
 typedef struct PublicationTable
 {
 	NodeTag		type;
-	RangeVar   *relation;		/* relation to be published */
+	RangeVar   *relation;		/* publication relation */
 	Node	   *whereClause;	/* qualifications */
 	List	   *columns;		/* List of columns in a publication table */
+	bool		except;			/* True if listed in the EXCEPT clause */
 } PublicationTable;
 
 /*
@@ -4276,6 +4480,7 @@ typedef struct PublicationTable
 typedef enum PublicationObjSpecType
 {
 	PUBLICATIONOBJ_TABLE,		/* A table */
+	PUBLICATIONOBJ_EXCEPT_TABLE,	/* A table in the EXCEPT clause */
 	PUBLICATIONOBJ_TABLES_IN_SCHEMA,	/* All tables in schema */
 	PUBLICATIONOBJ_TABLES_IN_CUR_SCHEMA,	/* All tables in first element of
 											 * search_path */
@@ -4291,6 +4496,23 @@ typedef struct PublicationObjSpec
 	ParseLoc	location;		/* token location, or -1 if unknown */
 } PublicationObjSpec;
 
+/*
+ * Types of objects supported by FOR ALL publications
+ */
+typedef enum PublicationAllObjType
+{
+	PUBLICATION_ALL_TABLES,
+	PUBLICATION_ALL_SEQUENCES,
+} PublicationAllObjType;
+
+typedef struct PublicationAllObjSpec
+{
+	NodeTag		type;
+	PublicationAllObjType pubobjtype;	/* type of this publication object */
+	List	   *except_tables;	/* tables specified in the EXCEPT clause */
+	ParseLoc	location;		/* token location, or -1 if unknown */
+} PublicationAllObjSpec;
+
 typedef struct CreatePublicationStmt
 {
 	NodeTag		type;
@@ -4298,6 +4520,8 @@ typedef struct CreatePublicationStmt
 	List	   *options;		/* List of DefElem nodes */
 	List	   *pubobjects;		/* Optional list of publication objects */
 	bool		for_all_tables; /* Special publication for all tables in db */
+	bool		for_all_sequences;	/* Special publication for all sequences
+									 * in db */
 } CreatePublicationStmt;
 
 typedef enum AlterPublicationAction
@@ -4320,15 +4544,17 @@ typedef struct AlterPublicationStmt
 	 * objects.
 	 */
 	List	   *pubobjects;		/* Optional list of publication objects */
-	bool		for_all_tables; /* Special publication for all tables in db */
 	AlterPublicationAction action;	/* What action to perform with the given
 									 * objects */
+	bool		for_all_tables; /* True if ALL TABLES is specified */
+	bool		for_all_sequences;	/* True if ALL SEQUENCES is specified */
 } AlterPublicationStmt;
 
 typedef struct CreateSubscriptionStmt
 {
 	NodeTag		type;
 	char	   *subname;		/* Name of the subscription */
+	char	   *servername;		/* Server name of publisher */
 	char	   *conninfo;		/* Connection string to publisher */
 	List	   *publication;	/* One or more publication to subscribe to */
 	List	   *options;		/* List of DefElem nodes */
@@ -4337,11 +4563,13 @@ typedef struct CreateSubscriptionStmt
 typedef enum AlterSubscriptionType
 {
 	ALTER_SUBSCRIPTION_OPTIONS,
+	ALTER_SUBSCRIPTION_SERVER,
 	ALTER_SUBSCRIPTION_CONNECTION,
 	ALTER_SUBSCRIPTION_SET_PUBLICATION,
 	ALTER_SUBSCRIPTION_ADD_PUBLICATION,
 	ALTER_SUBSCRIPTION_DROP_PUBLICATION,
-	ALTER_SUBSCRIPTION_REFRESH,
+	ALTER_SUBSCRIPTION_REFRESH_PUBLICATION,
+	ALTER_SUBSCRIPTION_REFRESH_SEQUENCES,
 	ALTER_SUBSCRIPTION_ENABLED,
 	ALTER_SUBSCRIPTION_SKIP,
 } AlterSubscriptionType;
@@ -4351,6 +4579,7 @@ typedef struct AlterSubscriptionStmt
 	NodeTag		type;
 	AlterSubscriptionType kind; /* ALTER_SUBSCRIPTION_OPTIONS, etc */
 	char	   *subname;		/* Name of the subscription */
+	char	   *servername;		/* Server name of publisher */
 	char	   *conninfo;		/* Connection string to publisher */
 	List	   *publication;	/* One or more publication to subscribe to */
 	List	   *options;		/* List of DefElem nodes */
@@ -4363,5 +4592,13 @@ typedef struct DropSubscriptionStmt
 	bool		missing_ok;		/* Skip error if missing? */
 	DropBehavior behavior;		/* RESTRICT or CASCADE behavior */
 } DropSubscriptionStmt;
+
+typedef struct WaitStmt
+{
+	NodeTag		type;
+	char	   *lsn_literal;	/* LSN string from grammar */
+	List	   *options;		/* List of DefElem nodes */
+} WaitStmt;
+
 
 #endif							/* PARSENODES_H */

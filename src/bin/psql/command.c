@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2025, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2026, PostgreSQL Global Development Group
  *
  * src/bin/psql/command.c
  */
@@ -130,6 +130,8 @@ static backslashResult exec_command_pset(PsqlScanState scan_state, bool active_b
 static backslashResult exec_command_quit(PsqlScanState scan_state, bool active_branch);
 static backslashResult exec_command_reset(PsqlScanState scan_state, bool active_branch,
 										  PQExpBuffer query_buf);
+static backslashResult exec_command_restrict(PsqlScanState scan_state, bool active_branch,
+											 const char *cmd);
 static backslashResult exec_command_s(PsqlScanState scan_state, bool active_branch);
 static backslashResult exec_command_sendpipeline(PsqlScanState scan_state, bool active_branch);
 static backslashResult exec_command_set(PsqlScanState scan_state, bool active_branch);
@@ -142,6 +144,8 @@ static backslashResult exec_command_syncpipeline(PsqlScanState scan_state, bool 
 static backslashResult exec_command_t(PsqlScanState scan_state, bool active_branch);
 static backslashResult exec_command_T(PsqlScanState scan_state, bool active_branch);
 static backslashResult exec_command_timing(PsqlScanState scan_state, bool active_branch);
+static backslashResult exec_command_unrestrict(PsqlScanState scan_state, bool active_branch,
+											   const char *cmd);
 static backslashResult exec_command_unset(PsqlScanState scan_state, bool active_branch,
 										  const char *cmd);
 static backslashResult exec_command_write(PsqlScanState scan_state, bool active_branch,
@@ -192,6 +196,8 @@ static char *pset_value_string(const char *param, printQueryOpt *popt);
 static void checkWin32Codepage(void);
 #endif
 
+static bool restricted;
+static char *restrict_key;
 
 
 /*----------
@@ -237,8 +243,19 @@ HandleSlashCmds(PsqlScanState scan_state,
 	/* Parse off the command name */
 	cmd = psql_scan_slash_command(scan_state);
 
-	/* And try to execute it */
-	status = exec_command(cmd, scan_state, cstack, query_buf, previous_buf);
+	/*
+	 * And try to execute it.
+	 *
+	 * If we are in "restricted" mode, the only allowable backslash command is
+	 * \unrestrict (to exit restricted mode).
+	 */
+	if (restricted && strcmp(cmd, "unrestrict") != 0)
+	{
+		pg_log_error("backslash commands are restricted; only \\unrestrict is allowed");
+		status = PSQL_CMD_ERROR;
+	}
+	else
+		status = exec_command(cmd, scan_state, cstack, query_buf, previous_buf);
 
 	if (status == PSQL_CMD_UNKNOWN)
 	{
@@ -416,6 +433,8 @@ exec_command(const char *cmd,
 		status = exec_command_quit(scan_state, active_branch);
 	else if (strcmp(cmd, "r") == 0 || strcmp(cmd, "reset") == 0)
 		status = exec_command_reset(scan_state, active_branch, query_buf);
+	else if (strcmp(cmd, "restrict") == 0)
+		status = exec_command_restrict(scan_state, active_branch, cmd);
 	else if (strcmp(cmd, "s") == 0)
 		status = exec_command_s(scan_state, active_branch);
 	else if (strcmp(cmd, "sendpipeline") == 0)
@@ -438,6 +457,8 @@ exec_command(const char *cmd,
 		status = exec_command_T(scan_state, active_branch);
 	else if (strcmp(cmd, "timing") == 0)
 		status = exec_command_timing(scan_state, active_branch);
+	else if (strcmp(cmd, "unrestrict") == 0)
+		status = exec_command_unrestrict(scan_state, active_branch, cmd);
 	else if (strcmp(cmd, "unset") == 0)
 		status = exec_command_unset(scan_state, active_branch, cmd);
 	else if (strcmp(cmd, "w") == 0 || strcmp(cmd, "write") == 0)
@@ -1035,7 +1056,7 @@ exec_command_d(PsqlScanState scan_state, bool active_branch, const char *cmd)
 					success = describeTableDetails(pattern, show_verbose, show_system);
 				else
 					/* standard listing of interesting things */
-					success = listTables("tvmsE", NULL, show_verbose, show_system);
+					success = listTables("tvmsEG", NULL, show_verbose, show_system);
 				break;
 			case 'A':
 				{
@@ -1169,6 +1190,7 @@ exec_command_d(PsqlScanState scan_state, bool active_branch, const char *cmd)
 			case 'i':
 			case 's':
 			case 'E':
+			case 'G':
 				success = listTables(&cmd[1], pattern, show_verbose, show_system);
 				break;
 			case 'r':
@@ -1256,7 +1278,7 @@ exec_command_d(PsqlScanState scan_state, bool active_branch, const char *cmd)
 					success = listExtensions(pattern);
 				break;
 			case 'X':			/* Extended Statistics */
-				success = listExtendedStats(pattern);
+				success = listExtendedStats(pattern, show_verbose);
 				break;
 			case 'y':			/* Event Triggers */
 				success = listEventTriggers(pattern, show_verbose);
@@ -2688,7 +2710,8 @@ exec_command_pset(PsqlScanState scan_state, bool active_branch)
 
 			int			i;
 			static const char *const my_list[] = {
-				"border", "columns", "csv_fieldsep", "expanded", "fieldsep",
+				"border", "columns", "csv_fieldsep",
+				"display_false", "display_true", "expanded", "fieldsep",
 				"fieldsep_zero", "footer", "format", "linestyle", "null",
 				"numericlocale", "pager", "pager_min_lines",
 				"recordsep", "recordsep_zero",
@@ -2750,6 +2773,35 @@ exec_command_reset(PsqlScanState scan_state, bool active_branch,
 		if (!pset.quiet)
 			puts(_("Query buffer reset (cleared)."));
 	}
+
+	return PSQL_CMD_SKIP_LINE;
+}
+
+/*
+ * \restrict -- enter "restricted mode" with the provided key
+ */
+static backslashResult
+exec_command_restrict(PsqlScanState scan_state, bool active_branch,
+					  const char *cmd)
+{
+	if (active_branch)
+	{
+		char	   *opt;
+
+		Assert(!restricted);
+
+		opt = psql_scan_slash_option(scan_state, OT_NORMAL, NULL, true);
+		if (opt == NULL || opt[0] == '\0')
+		{
+			pg_log_error("\\%s: missing required argument", cmd);
+			return PSQL_CMD_ERROR;
+		}
+
+		restrict_key = pstrdup(opt);
+		restricted = true;
+	}
+	else
+		ignore_slash_options(scan_state);
 
 	return PSQL_CMD_SKIP_LINE;
 }
@@ -3133,6 +3185,46 @@ exec_command_timing(PsqlScanState scan_state, bool active_branch)
 		ignore_slash_options(scan_state);
 
 	return success ? PSQL_CMD_SKIP_LINE : PSQL_CMD_ERROR;
+}
+
+/*
+ * \unrestrict -- exit "restricted mode" if provided key matches
+ */
+static backslashResult
+exec_command_unrestrict(PsqlScanState scan_state, bool active_branch,
+						const char *cmd)
+{
+	if (active_branch)
+	{
+		char	   *opt;
+
+		opt = psql_scan_slash_option(scan_state, OT_NORMAL, NULL, true);
+		if (opt == NULL || opt[0] == '\0')
+		{
+			pg_log_error("\\%s: missing required argument", cmd);
+			return PSQL_CMD_ERROR;
+		}
+
+		if (!restricted)
+		{
+			pg_log_error("\\%s: not currently in restricted mode", cmd);
+			return PSQL_CMD_ERROR;
+		}
+		else if (strcmp(opt, restrict_key) == 0)
+		{
+			pfree(restrict_key);
+			restricted = false;
+		}
+		else
+		{
+			pg_log_error("\\%s: wrong key", cmd);
+			return PSQL_CMD_ERROR;
+		}
+	}
+	else
+		ignore_slash_options(scan_state);
+
+	return PSQL_CMD_SKIP_LINE;
 }
 
 /*
@@ -4077,8 +4169,8 @@ do_connect(enum trivalue reuse_previous_specification,
 	/* Loop till we have a connection or fail, which we might've already */
 	while (success)
 	{
-		const char **keywords = pg_malloc((nconnopts + 1) * sizeof(*keywords));
-		const char **values = pg_malloc((nconnopts + 1) * sizeof(*values));
+		const char **keywords = pg_malloc_array(const char *, nconnopts + 1);
+		const char **values = pg_malloc_array(const char *, nconnopts + 1);
 		int			paramnum = 0;
 		PQconninfoOption *ci;
 
@@ -5210,6 +5302,26 @@ do_pset(const char *param, const char *value, printQueryOpt *popt, bool quiet)
 		}
 	}
 
+	/* 'false' display */
+	else if (strcmp(param, "display_false") == 0)
+	{
+		if (value)
+		{
+			free(popt->falsePrint);
+			popt->falsePrint = pg_strdup(value);
+		}
+	}
+
+	/* 'true' display */
+	else if (strcmp(param, "display_true") == 0)
+	{
+		if (value)
+		{
+			free(popt->truePrint);
+			popt->truePrint = pg_strdup(value);
+		}
+	}
+
 	/* field separator for unaligned text */
 	else if (strcmp(param, "fieldsep") == 0)
 	{
@@ -5384,6 +5496,20 @@ printPsetInfo(const char *param, printQueryOpt *popt)
 			   popt->topt.csvFieldSep);
 	}
 
+	/* show boolean 'false' display */
+	else if (strcmp(param, "display_false") == 0)
+	{
+		printf(_("Boolean false display is \"%s\".\n"),
+			   popt->falsePrint ? popt->falsePrint : "f");
+	}
+
+	/* show boolean 'true' display */
+	else if (strcmp(param, "display_true") == 0)
+	{
+		printf(_("Boolean true display is \"%s\".\n"),
+			   popt->truePrint ? popt->truePrint : "t");
+	}
+
 	/* show field separator for unaligned text */
 	else if (strcmp(param, "fieldsep") == 0)
 	{
@@ -5540,7 +5666,7 @@ savePsetInfo(const printQueryOpt *popt)
 {
 	printQueryOpt *save;
 
-	save = (printQueryOpt *) pg_malloc(sizeof(printQueryOpt));
+	save = pg_malloc_object(printQueryOpt);
 
 	/* Flat-copy all the scalar fields, then duplicate sub-structures. */
 	memcpy(save, popt, sizeof(printQueryOpt));
@@ -5653,6 +5779,10 @@ pset_value_string(const char *param, printQueryOpt *popt)
 		return psprintf("%d", popt->topt.columns);
 	else if (strcmp(param, "csv_fieldsep") == 0)
 		return pset_quoted_string(popt->topt.csvFieldSep);
+	else if (strcmp(param, "display_false") == 0)
+		return pset_quoted_string(popt->falsePrint ? popt->falsePrint : "f");
+	else if (strcmp(param, "display_true") == 0)
+		return pset_quoted_string(popt->truePrint ? popt->truePrint : "t");
 	else if (strcmp(param, "expanded") == 0)
 		return pstrdup(popt->topt.expanded == 2
 					   ? "auto"
@@ -6028,14 +6158,14 @@ echo_hidden_command(const char *query)
 {
 	if (pset.echo_hidden != PSQL_ECHO_HIDDEN_OFF)
 	{
-		printf(_("/******** QUERY *********/\n"
+		printf(_("/**** INTERNAL QUERY ****/\n"
 				 "%s\n"
 				 "/************************/\n\n"), query);
 		fflush(stdout);
 		if (pset.logfile)
 		{
 			fprintf(pset.logfile,
-					_("/******** QUERY *********/\n"
+					_("/**** INTERNAL QUERY ****/\n"
 					  "%s\n"
 					  "/************************/\n\n"), query);
 			fflush(pset.logfile);
@@ -6072,6 +6202,7 @@ lookup_object_oid(EditableObjectType obj_type, const char *desc,
 			 * query to retrieve the function's OID using a cast to regproc or
 			 * regprocedure (as appropriate).
 			 */
+			printfPQExpBuffer(query, "/* %s */\n", _("Get function's OID"));
 			appendPQExpBufferStr(query, "SELECT ");
 			appendStringLiteralConn(query, desc, pset.db);
 			appendPQExpBuffer(query, "::pg_catalog.%s::pg_catalog.oid",
@@ -6085,6 +6216,7 @@ lookup_object_oid(EditableObjectType obj_type, const char *desc,
 			 * this code doesn't check if the relation is actually a view.
 			 * We'll detect that in get_create_object_cmd().
 			 */
+			printfPQExpBuffer(query, "/* %s */\n", _("Get view's OID"));
 			appendPQExpBufferStr(query, "SELECT ");
 			appendStringLiteralConn(query, desc, pset.db);
 			appendPQExpBufferStr(query, "::pg_catalog.regclass::pg_catalog.oid");
@@ -6126,7 +6258,8 @@ get_create_object_cmd(EditableObjectType obj_type, Oid oid,
 	switch (obj_type)
 	{
 		case EditableFunction:
-			printfPQExpBuffer(query,
+			printfPQExpBuffer(query, "/* %s */\n", _("Get function's definition"));
+			appendPQExpBuffer(query,
 							  "SELECT pg_catalog.pg_get_functiondef(%u)",
 							  oid);
 			break;
@@ -6145,9 +6278,10 @@ get_create_object_cmd(EditableObjectType obj_type, Oid oid,
 			 * separately.  Materialized views (introduced in 9.3) may have
 			 * arbitrary storage parameter reloptions.
 			 */
+			printfPQExpBuffer(query, "/* %s */\n", _("Get view's definition and details"));
 			if (pset.sversion >= 90400)
 			{
-				printfPQExpBuffer(query,
+				appendPQExpBuffer(query,
 								  "SELECT nspname, relname, relkind, "
 								  "pg_catalog.pg_get_viewdef(c.oid, true), "
 								  "pg_catalog.array_remove(pg_catalog.array_remove(c.reloptions,'check_option=local'),'check_option=cascaded') AS reloptions, "
@@ -6160,7 +6294,7 @@ get_create_object_cmd(EditableObjectType obj_type, Oid oid,
 			}
 			else
 			{
-				printfPQExpBuffer(query,
+				appendPQExpBuffer(query,
 								  "SELECT nspname, relname, relkind, "
 								  "pg_catalog.pg_get_viewdef(c.oid, true), "
 								  "c.reloptions AS reloptions, "

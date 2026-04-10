@@ -26,7 +26,7 @@
  * restart needs to be forced.)
  *
  *
- * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -63,10 +63,12 @@
 #include "storage/shmem.h"
 #include "storage/smgr.h"
 #include "storage/spin.h"
+#include "storage/subsystems.h"
 #include "utils/acl.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/resowner.h"
+#include "utils/wait_event.h"
 
 
 /*----------
@@ -142,6 +144,14 @@ typedef struct
 
 static CheckpointerShmemStruct *CheckpointerShmem;
 
+static void CheckpointerShmemRequest(void *arg);
+static void CheckpointerShmemInit(void *arg);
+
+const ShmemCallbacks CheckpointerShmemCallbacks = {
+	.request_fn = CheckpointerShmemRequest,
+	.init_fn = CheckpointerShmemInit,
+};
+
 /* interval for calling AbsorbSyncRequests in CheckpointWriteDelay */
 #define WRITES_PER_ABSORB		1000
 
@@ -199,7 +209,6 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 
 	Assert(startup_data_len == 0);
 
-	MyBackendType = B_CHECKPOINTER;
 	AuxiliaryProcessMainCommon();
 
 	CheckpointerShmem->checkpointer_pid = MyProcPid;
@@ -558,6 +567,12 @@ CheckpointerMain(const void *startup_data, size_t startup_data_len)
 			if (ShutdownXLOGPending || ShutdownRequestPending)
 				break;
 		}
+
+		/*
+		 * Disable logical decoding if someone requested it. See comments atop
+		 * logicalctl.c.
+		 */
+		DisableLogicalDecodingIfNecessary();
 
 		/* Check for archive_timeout and switch xlog files if necessary. */
 		CheckArchiveTimeout();
@@ -944,11 +959,11 @@ ReqShutdownXLOG(SIGNAL_ARGS)
  */
 
 /*
- * CheckpointerShmemSize
- *		Compute space needed for checkpointer-related shared memory
+ * CheckpointerShmemRequest
+ *		Register shared memory space needed for checkpointer
  */
-Size
-CheckpointerShmemSize(void)
+static void
+CheckpointerShmemRequest(void *arg)
 {
 	Size		size;
 
@@ -961,39 +976,24 @@ CheckpointerShmemSize(void)
 	size = add_size(size, mul_size(Min(NBuffers,
 									   MAX_CHECKPOINT_REQUESTS),
 								   sizeof(CheckpointerRequest)));
-
-	return size;
+	ShmemRequestStruct(.name = "Checkpointer Data",
+					   .size = size,
+					   .ptr = (void **) &CheckpointerShmem,
+		);
 }
 
 /*
  * CheckpointerShmemInit
- *		Allocate and initialize checkpointer-related shared memory
+ *		Initialize checkpointer-related shared memory
  */
-void
-CheckpointerShmemInit(void)
+static void
+CheckpointerShmemInit(void *arg)
 {
-	Size		size = CheckpointerShmemSize();
-	bool		found;
-
-	CheckpointerShmem = (CheckpointerShmemStruct *)
-		ShmemInitStruct("Checkpointer Data",
-						size,
-						&found);
-
-	if (!found)
-	{
-		/*
-		 * First time through, so initialize.  Note that we zero the whole
-		 * requests array; this is so that CompactCheckpointerRequestQueue can
-		 * assume that any pad bytes in the request structs are zeroes.
-		 */
-		MemSet(CheckpointerShmem, 0, size);
-		SpinLockInit(&CheckpointerShmem->ckpt_lck);
-		CheckpointerShmem->max_requests = Min(NBuffers, MAX_CHECKPOINT_REQUESTS);
-		CheckpointerShmem->head = CheckpointerShmem->tail = 0;
-		ConditionVariableInit(&CheckpointerShmem->start_cv);
-		ConditionVariableInit(&CheckpointerShmem->done_cv);
-	}
+	SpinLockInit(&CheckpointerShmem->ckpt_lck);
+	CheckpointerShmem->max_requests = Min(NBuffers, MAX_CHECKPOINT_REQUESTS);
+	CheckpointerShmem->head = CheckpointerShmem->tail = 0;
+	ConditionVariableInit(&CheckpointerShmem->start_cv);
+	ConditionVariableInit(&CheckpointerShmem->done_cv);
 }
 
 /*
@@ -1019,7 +1019,8 @@ ExecCheckpoint(ParseState *pstate, CheckPointStmt *stmt)
 			else if (strcmp(mode, "fast") != 0)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
-						 errmsg("unrecognized MODE option \"%s\"", mode),
+						 errmsg("unrecognized value for %s option \"%s\": \"%s\"",
+								"CHECKPOINT", "mode", mode),
 						 parser_errposition(pstate, opt->location)));
 		}
 		else if (strcmp(opt->defname, "flush_unlogged") == 0)
@@ -1027,7 +1028,8 @@ ExecCheckpoint(ParseState *pstate, CheckPointStmt *stmt)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("unrecognized CHECKPOINT option \"%s\"", opt->defname),
+					 errmsg("unrecognized %s option \"%s\"",
+							"CHECKPOINT", opt->defname),
 					 parser_errposition(pstate, opt->location)));
 	}
 
@@ -1316,7 +1318,7 @@ CompactCheckpointerRequestQueue(void)
 	num_requests = CheckpointerShmem->num_requests;
 
 	/* Initialize skip_slot array */
-	skip_slot = palloc0(sizeof(bool) * max_requests);
+	skip_slot = palloc0_array(bool, max_requests);
 
 	head = CheckpointerShmem->head;
 
@@ -1532,4 +1534,17 @@ FirstCallSinceLastCheckpoint(void)
 	ckpt_done = new_done;
 
 	return FirstCall;
+}
+
+/*
+ * Wake up the checkpointer process.
+ */
+void
+WakeupCheckpointer(void)
+{
+	volatile PROC_HDR *procglobal = ProcGlobal;
+	ProcNumber	checkpointerProc = procglobal->checkpointerProc;
+
+	if (checkpointerProc != INVALID_PROC_NUMBER)
+		SetLatch(&GetPGProcByNumber(checkpointerProc)->procLatch);
 }

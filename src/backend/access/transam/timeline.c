@@ -21,7 +21,7 @@
  * The fields are separated by tabs. Lines beginning with # are comments, and
  * are ignored. Empty lines are also ignored.
  *
- * Portions Copyright (c) 1996-2025, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2026, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/timeline.c
@@ -41,6 +41,7 @@
 #include "access/xlogdefs.h"
 #include "pgstat.h"
 #include "storage/fd.h"
+#include "utils/wait_event.h"
 
 /*
  * Copies all timeline history files with id's between 'begin' and 'end'
@@ -87,7 +88,7 @@ readTimeLineHistory(TimeLineID targetTLI)
 	/* Timeline 1 does not have a history file, so no need to check */
 	if (targetTLI == 1)
 	{
-		entry = (TimeLineHistoryEntry *) palloc(sizeof(TimeLineHistoryEntry));
+		entry = palloc_object(TimeLineHistoryEntry);
 		entry->tli = targetTLI;
 		entry->begin = entry->end = InvalidXLogRecPtr;
 		return list_make1(entry);
@@ -110,7 +111,7 @@ readTimeLineHistory(TimeLineID targetTLI)
 					(errcode_for_file_access(),
 					 errmsg("could not open file \"%s\": %m", path)));
 		/* Not there, so assume no parents */
-		entry = (TimeLineHistoryEntry *) palloc(sizeof(TimeLineHistoryEntry));
+		entry = palloc_object(TimeLineHistoryEntry);
 		entry->tli = targetTLI;
 		entry->begin = entry->end = InvalidXLogRecPtr;
 		return list_make1(entry);
@@ -175,7 +176,7 @@ readTimeLineHistory(TimeLineID targetTLI)
 
 		lasttli = tli;
 
-		entry = (TimeLineHistoryEntry *) palloc(sizeof(TimeLineHistoryEntry));
+		entry = palloc_object(TimeLineHistoryEntry);
 		entry->tli = tli;
 		entry->begin = prevend;
 		entry->end = ((uint64) (switchpoint_hi)) << 32 | (uint64) switchpoint_lo;
@@ -198,7 +199,7 @@ readTimeLineHistory(TimeLineID targetTLI)
 	 * Create one more entry for the "tip" of the timeline, which has no entry
 	 * in the history file.
 	 */
-	entry = (TimeLineHistoryEntry *) palloc(sizeof(TimeLineHistoryEntry));
+	entry = palloc_object(TimeLineHistoryEntry);
 	entry->tli = targetTLI;
 	entry->begin = prevend;
 	entry->end = InvalidXLogRecPtr;
@@ -549,8 +550,8 @@ tliOfPointInHistory(XLogRecPtr ptr, List *history)
 	{
 		TimeLineHistoryEntry *tle = (TimeLineHistoryEntry *) lfirst(cell);
 
-		if ((XLogRecPtrIsInvalid(tle->begin) || tle->begin <= ptr) &&
-			(XLogRecPtrIsInvalid(tle->end) || ptr < tle->end))
+		if ((!XLogRecPtrIsValid(tle->begin) || tle->begin <= ptr) &&
+			(!XLogRecPtrIsValid(tle->end) || ptr < tle->end))
 		{
 			/* found it */
 			return tle->tli;

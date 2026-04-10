@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2025, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2026, PostgreSQL Global Development Group
  *
  * src/bin/psql/tab-complete.in.c
  *
@@ -443,6 +443,26 @@ do { \
 	matches = rl_completion_matches(text, complete_from_schema_query); \
 } while (0)
 
+#define COMPLETE_WITH_FILES_LIST(escape, force_quote, list) \
+do { \
+	completion_charp = escape; \
+	completion_charpp = list; \
+	completion_force_quote = force_quote; \
+	matches = rl_completion_matches(text, complete_from_files); \
+} while (0)
+
+#define COMPLETE_WITH_FILES(escape, force_quote) \
+	COMPLETE_WITH_FILES_LIST(escape, force_quote, NULL)
+
+#define COMPLETE_WITH_FILES_PLUS(escape, force_quote, ...) \
+do { \
+	static const char *const list[] = { __VA_ARGS__, NULL }; \
+	COMPLETE_WITH_FILES_LIST(escape, force_quote, list); \
+} while (0)
+
+#define COMPLETE_WITH_GENERATOR(generator) \
+	matches = rl_completion_matches(text, generator)
+
 /*
  * Assembly instructions for schema queries
  *
@@ -793,6 +813,14 @@ static const SchemaQuery Query_for_list_of_partitioned_indexes = {
 	.viscondition = "pg_catalog.pg_table_is_visible(c.oid)",
 	.namespace = "c.relnamespace",
 	.result = "c.relname",
+};
+
+static const SchemaQuery Query_for_list_of_propgraphs = {
+	.catname = "pg_catalog.pg_class c",
+	.selcondition = "c.relkind IN (" CppAsString2(RELKIND_PROPGRAPH) ")",
+	.viscondition = "pg_catalog.pg_table_is_visible(c.oid)",
+	.namespace = "c.relnamespace",
+	.result = "pg_catalog.quote_ident(c.relname)",
 };
 
 
@@ -1212,7 +1240,7 @@ Copy_common_options, "DEFAULT", "FORCE_NOT_NULL", "FORCE_NULL", "FREEZE", \
 
 /* COPY TO options */
 #define Copy_to_options \
-Copy_common_options, "FORCE_QUOTE"
+Copy_common_options, "FORCE_QUOTE", "FORCE_ARRAY"
 
 /*
  * These object types were introduced later than our support cutoff of
@@ -1247,10 +1275,11 @@ static const char *const sql_commands[] = {
 	"DELETE FROM", "DISCARD", "DO", "DROP", "END", "EXECUTE", "EXPLAIN",
 	"FETCH", "GRANT", "IMPORT FOREIGN SCHEMA", "INSERT INTO", "LISTEN", "LOAD", "LOCK",
 	"MERGE INTO", "MOVE", "NOTIFY", "PREPARE",
-	"REASSIGN", "REFRESH MATERIALIZED VIEW", "REINDEX", "RELEASE",
+	"REASSIGN", "REFRESH MATERIALIZED VIEW", "REINDEX", "RELEASE", "REPACK",
 	"RESET", "REVOKE", "ROLLBACK",
 	"SAVEPOINT", "SECURITY LABEL", "SELECT", "SET", "SHOW", "START",
-	"TABLE", "TRUNCATE", "UNLISTEN", "UPDATE", "VACUUM", "VALUES", "WITH",
+	"TABLE", "TRUNCATE", "UNLISTEN", "UPDATE", "VACUUM", "VALUES",
+	"WAIT FOR", "WITH",
 	NULL
 };
 
@@ -1267,7 +1296,7 @@ typedef struct
 	const VersionedQuery *vquery;	/* versioned query, or NULL */
 	const SchemaQuery *squery;	/* schema query, or NULL */
 	const char *const *keywords;	/* keywords to be offered as well */
-	const bits32 flags;			/* visibility flags, see below */
+	const uint32 flags;			/* visibility flags, see below */
 } pgsql_thing_t;
 
 #define THING_NO_CREATE		(1 << 0)	/* should not show up after CREATE */
@@ -1315,6 +1344,7 @@ static const pgsql_thing_t words_after_create[] = {
 	{"PARSER", NULL, NULL, &Query_for_list_of_ts_parsers, NULL, THING_NO_SHOW},
 	{"POLICY", NULL, NULL, NULL},
 	{"PROCEDURE", NULL, NULL, Query_for_list_of_procedures},
+	{"PROPERTY GRAPH", NULL, NULL, &Query_for_list_of_propgraphs},
 	{"PUBLICATION", NULL, Query_for_list_of_publications},
 	{"ROLE", Query_for_list_of_roles},
 	{"ROUTINE", NULL, NULL, &Query_for_list_of_routines, NULL, THING_NO_CREATE},
@@ -1402,6 +1432,7 @@ static const char *const table_storage_parameters[] = {
 	"autovacuum_multixact_freeze_max_age",
 	"autovacuum_multixact_freeze_min_age",
 	"autovacuum_multixact_freeze_table_age",
+	"autovacuum_parallel_workers",
 	"autovacuum_vacuum_cost_delay",
 	"autovacuum_vacuum_cost_limit",
 	"autovacuum_vacuum_insert_scale_factor",
@@ -1411,6 +1442,7 @@ static const char *const table_storage_parameters[] = {
 	"autovacuum_vacuum_threshold",
 	"fillfactor",
 	"log_autovacuum_min_duration",
+	"log_autoanalyze_min_duration",
 	"parallel_workers",
 	"toast.autovacuum_enabled",
 	"toast.autovacuum_freeze_max_age",
@@ -1474,6 +1506,7 @@ static void append_variable_names(char ***varnames, int *nvars,
 static char **complete_from_variables(const char *text,
 									  const char *prefix, const char *suffix, bool need_value);
 static char *complete_from_files(const char *text, int state);
+static char *_complete_from_files(const char *text, int state);
 
 static char *pg_strdup_keyword_case(const char *s, const char *ref);
 static char *escape_string(const char *text);
@@ -1918,11 +1951,11 @@ psql_completion(const char *text, int start, int end)
 		"\\out",
 		"\\parse", "\\password", "\\print", "\\prompt", "\\pset",
 		"\\qecho", "\\quit",
-		"\\reset",
+		"\\reset", "\\restrict",
 		"\\s", "\\sendpipeline", "\\set", "\\setenv", "\\sf",
 		"\\startpipeline", "\\sv", "\\syncpipeline",
 		"\\t", "\\T", "\\timing",
-		"\\unset",
+		"\\unrestrict", "\\unset",
 		"\\x",
 		"\\warn", "\\watch", "\\write",
 		"\\z",
@@ -2178,11 +2211,15 @@ match_previous_words(int pattern_id,
 	{
 		/* only some object types can be created as part of CREATE SCHEMA */
 		if (HeadMatches("CREATE", "SCHEMA"))
-			COMPLETE_WITH("TABLE", "VIEW", "INDEX", "SEQUENCE", "TRIGGER",
+			COMPLETE_WITH("AGGREGATE", "COLLATION", "DOMAIN", "FUNCTION",
+						  "INDEX", "OPERATOR", "PROCEDURE", "SEQUENCE", "TABLE",
+						  "TEXT SEARCH CONFIGURATION", "TEXT SEARCH DICTIONARY",
+						  "TEXT SEARCH PARSER", "TEXT SEARCH TEMPLATE",
+						  "TRIGGER", "TYPE", "VIEW",
 			/* for INDEX and TABLE/SEQUENCE, respectively */
 						  "UNIQUE", "UNLOGGED");
 		else
-			matches = rl_completion_matches(text, create_command_generator);
+			COMPLETE_WITH_GENERATOR(create_command_generator);
 	}
 	/* complete with something you can create or replace */
 	else if (TailMatches("CREATE", "OR", "REPLACE"))
@@ -2192,7 +2229,7 @@ match_previous_words(int pattern_id,
 /* DROP, but not DROP embedded in other commands */
 	/* complete with something you can drop */
 	else if (Matches("DROP"))
-		matches = rl_completion_matches(text, drop_command_generator);
+		COMPLETE_WITH_GENERATOR(drop_command_generator);
 
 /* ALTER */
 
@@ -2203,7 +2240,7 @@ match_previous_words(int pattern_id,
 
 	/* ALTER something */
 	else if (Matches("ALTER"))
-		matches = rl_completion_matches(text, alter_command_generator);
+		COMPLETE_WITH_GENERATOR(alter_command_generator);
 	/* ALTER TABLE,INDEX,MATERIALIZED VIEW ALL IN TABLESPACE xxx */
 	else if (TailMatches("ALL", "IN", "TABLESPACE", MatchAny))
 		COMPLETE_WITH("SET TABLESPACE", "OWNED BY");
@@ -2297,7 +2334,22 @@ match_previous_words(int pattern_id,
 		COMPLETE_WITH("TABLES IN SCHEMA", "TABLE");
 	/* ALTER PUBLICATION <name> SET */
 	else if (Matches("ALTER", "PUBLICATION", MatchAny, "SET"))
-		COMPLETE_WITH("(", "TABLES IN SCHEMA", "TABLE");
+		COMPLETE_WITH("(", "ALL SEQUENCES", "ALL TABLES", "TABLES IN SCHEMA", "TABLE");
+	else if (Matches("ALTER", "PUBLICATION", MatchAny, "SET", "ALL"))
+		COMPLETE_WITH("SEQUENCES", "TABLES");
+	else if (Matches("ALTER", "PUBLICATION", MatchAny, "SET", "ALL", "TABLES"))
+		COMPLETE_WITH("EXCEPT ( TABLE");
+	else if (Matches("ALTER", "PUBLICATION", MatchAny, "SET", "ALL", "TABLES", "EXCEPT"))
+		COMPLETE_WITH("( TABLE");
+	else if (Matches("ALTER", "PUBLICATION", MatchAny, "SET", "ALL", "TABLES", "EXCEPT", "("))
+		COMPLETE_WITH("TABLE");
+	/* Complete "ALTER PUBLICATION <name> FOR TABLE" with "<table>, ..." */
+	else if (Matches("ALTER", "PUBLICATION", MatchAny, "SET", "ALL", "TABLES", "EXCEPT", "(", "TABLE"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
+	else if (Matches("ALTER", "PUBLICATION", MatchAny, "SET", "ALL", "TABLES", "EXCEPT", "(", "TABLE", MatchAnyN) && ends_with(prev_wd, ','))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
+	else if (Matches("ALTER", "PUBLICATION", MatchAny, "SET", "ALL", "TABLES", "EXCEPT", "(", "TABLE", MatchAnyN) && !ends_with(prev_wd, ','))
+		COMPLETE_WITH(")");
 	else if (Matches("ALTER", "PUBLICATION", MatchAny, "ADD|DROP|SET", "TABLES", "IN", "SCHEMA"))
 		COMPLETE_WITH_QUERY_PLUS(Query_for_list_of_schemas
 								 " AND nspname NOT LIKE E'pg\\\\_%%'",
@@ -2308,11 +2360,13 @@ match_previous_words(int pattern_id,
 	/* ALTER SUBSCRIPTION <name> */
 	else if (Matches("ALTER", "SUBSCRIPTION", MatchAny))
 		COMPLETE_WITH("CONNECTION", "ENABLE", "DISABLE", "OWNER TO",
-					  "RENAME TO", "REFRESH PUBLICATION", "SET", "SKIP (",
-					  "ADD PUBLICATION", "DROP PUBLICATION");
-	/* ALTER SUBSCRIPTION <name> REFRESH PUBLICATION */
-	else if (Matches("ALTER", "SUBSCRIPTION", MatchAny, MatchAnyN, "REFRESH", "PUBLICATION"))
-		COMPLETE_WITH("WITH (");
+					  "RENAME TO", "REFRESH PUBLICATION", "REFRESH SEQUENCES",
+					  "SERVER", "SET", "SKIP (", "ADD PUBLICATION", "DROP PUBLICATION");
+	else if (Matches("ALTER", "SUBSCRIPTION", MatchAny, "SERVER"))
+		COMPLETE_WITH_QUERY(Query_for_list_of_servers);
+	/* ALTER SUBSCRIPTION <name> REFRESH */
+	else if (Matches("ALTER", "SUBSCRIPTION", MatchAny, MatchAnyN, "REFRESH"))
+		COMPLETE_WITH("PUBLICATION", "SEQUENCES");
 	/* ALTER SUBSCRIPTION <name> REFRESH PUBLICATION WITH ( */
 	else if (Matches("ALTER", "SUBSCRIPTION", MatchAny, MatchAnyN, "REFRESH", "PUBLICATION", "WITH", "("))
 		COMPLETE_WITH("copy_data");
@@ -2321,7 +2375,8 @@ match_previous_words(int pattern_id,
 		COMPLETE_WITH("(", "PUBLICATION");
 	/* ALTER SUBSCRIPTION <name> SET ( */
 	else if (Matches("ALTER", "SUBSCRIPTION", MatchAny, MatchAnyN, "SET", "("))
-		COMPLETE_WITH("binary", "disable_on_error", "failover", "origin",
+		COMPLETE_WITH("binary", "disable_on_error", "failover",
+					  "max_retention_duration", "origin",
 					  "password_required", "retain_dead_tuples",
 					  "run_as_owner", "slot_name", "streaming",
 					  "synchronous_commit", "two_phase");
@@ -2425,10 +2480,10 @@ match_previous_words(int pattern_id,
 
 	/* ALTER FOREIGN DATA WRAPPER <name> */
 	else if (Matches("ALTER", "FOREIGN", "DATA", "WRAPPER", MatchAny))
-		COMPLETE_WITH("HANDLER", "VALIDATOR", "NO",
-					  "OPTIONS", "OWNER TO", "RENAME TO");
+		COMPLETE_WITH("CONNECTION", "HANDLER", "NO",
+					  "OPTIONS", "OWNER TO", "RENAME TO", "VALIDATOR");
 	else if (Matches("ALTER", "FOREIGN", "DATA", "WRAPPER", MatchAny, "NO"))
-		COMPLETE_WITH("HANDLER", "VALIDATOR");
+		COMPLETE_WITH("CONNECTION", "HANDLER", "VALIDATOR");
 
 	/* ALTER FOREIGN TABLE <name> */
 	else if (Matches("ALTER", "FOREIGN", "TABLE", MatchAny))
@@ -2512,12 +2567,24 @@ match_previous_words(int pattern_id,
 	else if (Matches("ALTER", "USER|ROLE", MatchAny) &&
 			 !TailMatches("USER", "MAPPING"))
 		COMPLETE_WITH("BYPASSRLS", "CONNECTION LIMIT", "CREATEDB", "CREATEROLE",
-					  "ENCRYPTED PASSWORD", "INHERIT", "LOGIN", "NOBYPASSRLS",
+					  "ENCRYPTED PASSWORD", "IN", "INHERIT", "LOGIN", "NOBYPASSRLS",
 					  "NOCREATEDB", "NOCREATEROLE", "NOINHERIT",
 					  "NOLOGIN", "NOREPLICATION", "NOSUPERUSER", "PASSWORD",
 					  "RENAME TO", "REPLICATION", "RESET", "SET", "SUPERUSER",
 					  "VALID UNTIL", "WITH");
-
+	/* ALTER USER,ROLE <name> IN */
+	else if (Matches("ALTER", "USER|ROLE", MatchAny, "IN"))
+		COMPLETE_WITH("DATABASE");
+	/* ALTER USER,ROLE <name> IN DATABASE */
+	else if (Matches("ALTER", "USER|ROLE", MatchAny, "IN", "DATABASE"))
+		COMPLETE_WITH_QUERY(Query_for_list_of_databases);
+	/* ALTER USER,ROLE <name> IN DATABASE <dbname> */
+	else if (Matches("ALTER", "USER|ROLE", MatchAny, "IN", "DATABASE", MatchAny))
+		COMPLETE_WITH("SET", "RESET");
+	/* ALTER USER,ROLE <name> IN DATABASE <dbname> SET */
+	else if (Matches("ALTER", "USER|ROLE", MatchAny, "IN", "DATABASE", MatchAny, "SET"))
+		COMPLETE_WITH_QUERY(Query_for_list_of_set_vars);
+	/* XXX missing support for ALTER ROLE <name> IN DATABASE <dbname> RESET */
 	/* ALTER USER,ROLE <name> RESET */
 	else if (Matches("ALTER", "USER|ROLE", MatchAny, "RESET"))
 	{
@@ -2703,6 +2770,20 @@ match_previous_words(int pattern_id,
 	else if (Matches("ALTER", "POLICY", MatchAny, "ON", MatchAny, "WITH", "CHECK"))
 		COMPLETE_WITH("(");
 
+	/* ALTER PROPERTY GRAPH */
+	else if (Matches("ALTER", "PROPERTY", "GRAPH"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs);
+	else if (Matches("ALTER", "PROPERTY", "GRAPH", MatchAny))
+		COMPLETE_WITH("ADD", "ALTER", "DROP", "OWNER TO", "RENAME TO", "SET SCHEMA");
+	else if (Matches("ALTER", "PROPERTY", "GRAPH", MatchAny, "ADD|ALTER|DROP"))
+		COMPLETE_WITH("VERTEX", "EDGE");
+	else if (Matches("ALTER", "PROPERTY", "GRAPH", MatchAny, "ADD|DROP", "VERTEX|EDGE"))
+		COMPLETE_WITH("TABLES");
+	else if (HeadMatches("ALTER", "PROPERTY", "GRAPH", MatchAny, "ADD") && TailMatches("EDGE"))
+		COMPLETE_WITH("TABLES");
+	else if (Matches("ALTER", "PROPERTY", "GRAPH", MatchAny, "ALTER", "VERTEX|EDGE"))
+		COMPLETE_WITH("TABLE");
+
 	/* ALTER RULE <name>, add ON */
 	else if (Matches("ALTER", "RULE", MatchAny))
 		COMPLETE_WITH("ON");
@@ -2749,6 +2830,7 @@ match_previous_words(int pattern_id,
 					  "OWNER TO", "SET", "VALIDATE CONSTRAINT",
 					  "REPLICA IDENTITY", "ATTACH PARTITION",
 					  "DETACH PARTITION", "FORCE ROW LEVEL SECURITY",
+					  "SPLIT PARTITION", "MERGE PARTITIONS (",
 					  "OF", "NOT OF");
 	/* ALTER TABLE xxx ADD */
 	else if (Matches("ALTER", "TABLE", MatchAny, "ADD"))
@@ -3011,16 +3093,29 @@ match_previous_words(int pattern_id,
 		COMPLETE_WITH("FROM (", "IN (", "WITH (");
 
 	/*
-	 * If we have ALTER TABLE <foo> DETACH PARTITION, provide a list of
+	 * If we have ALTER TABLE <foo> DETACH|SPLIT PARTITION, provide a list of
 	 * partitions of <foo>.
 	 */
-	else if (Matches("ALTER", "TABLE", MatchAny, "DETACH", "PARTITION"))
+	else if (Matches("ALTER", "TABLE", MatchAny, "DETACH|SPLIT", "PARTITION"))
 	{
 		set_completion_reference(prev3_wd);
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_partition_of_table);
 	}
 	else if (Matches("ALTER", "TABLE", MatchAny, "DETACH", "PARTITION", MatchAny))
 		COMPLETE_WITH("CONCURRENTLY", "FINALIZE");
+
+	/* ALTER TABLE <name> SPLIT PARTITION <name> */
+	else if (Matches("ALTER", "TABLE", MatchAny, "SPLIT", "PARTITION", MatchAny))
+		COMPLETE_WITH("INTO ( PARTITION");
+
+	/* ALTER TABLE <name> MERGE PARTITIONS ( */
+	else if (Matches("ALTER", "TABLE", MatchAny, "MERGE", "PARTITIONS", "("))
+	{
+		set_completion_reference(prev4_wd);
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_partition_of_table);
+	}
+	else if (Matches("ALTER", "TABLE", MatchAny, "MERGE", "PARTITIONS", "(*)"))
+		COMPLETE_WITH("INTO");
 
 	/* ALTER TABLE <name> OF */
 	else if (Matches("ALTER", "TABLE", MatchAny, "OF"))
@@ -3132,6 +3227,9 @@ match_previous_words(int pattern_id,
 		else if (TailMatches("VERBOSE|SKIP_LOCKED"))
 			COMPLETE_WITH("ON", "OFF");
 	}
+	else if (Matches("ANALYZE", "(*)"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_analyzables,
+										"ONLY");
 	else if (Matches("ANALYZE", MatchAnyN, "("))
 		/* "ANALYZE (" should be caught above, so assume we want columns */
 		COMPLETE_WITH_ATTR(prev2_wd);
@@ -3222,7 +3320,7 @@ match_previous_words(int pattern_id,
 					  "FOREIGN DATA WRAPPER", "FOREIGN TABLE",
 					  "FUNCTION", "INDEX", "LANGUAGE", "LARGE OBJECT",
 					  "MATERIALIZED VIEW", "OPERATOR", "POLICY",
-					  "PROCEDURE", "PROCEDURAL LANGUAGE", "PUBLICATION", "ROLE",
+					  "PROCEDURE", "PROCEDURAL LANGUAGE", "PROPERTY GRAPH", "PUBLICATION", "ROLE",
 					  "ROUTINE", "RULE", "SCHEMA", "SEQUENCE", "SERVER",
 					  "STATISTICS", "SUBSCRIPTION", "TABLE",
 					  "TABLESPACE", "TEXT SEARCH", "TRANSFORM FOR",
@@ -3260,6 +3358,8 @@ match_previous_words(int pattern_id,
 	}
 	else if (Matches("COMMENT", "ON", "PROCEDURAL", "LANGUAGE"))
 		COMPLETE_WITH_QUERY(Query_for_list_of_languages);
+	else if (Matches("COMMENT", "ON", "PROPERTY", "GRAPH"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs);
 	else if (Matches("COMMENT", "ON", "RULE", MatchAny))
 		COMPLETE_WITH("ON");
 	else if (Matches("COMMENT", "ON", "RULE", MatchAny, "ON"))
@@ -3313,50 +3413,90 @@ match_previous_words(int pattern_id,
 	/* Complete COPY <sth> */
 	else if (Matches("COPY|\\copy", MatchAny))
 		COMPLETE_WITH("FROM", "TO");
-	/* Complete COPY <sth> FROM|TO with filename */
-	else if (Matches("COPY", MatchAny, "FROM|TO"))
+	/* Complete COPY|\copy <sth> FROM|TO with filename or STDIN/STDOUT/PROGRAM */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO"))
 	{
-		completion_charp = "";
-		completion_force_quote = true;	/* COPY requires quoted filename */
-		matches = rl_completion_matches(text, complete_from_files);
-	}
-	else if (Matches("\\copy", MatchAny, "FROM|TO"))
-	{
-		completion_charp = "";
-		completion_force_quote = false;
-		matches = rl_completion_matches(text, complete_from_files);
+		if (HeadMatches("COPY"))
+		{
+			/* COPY requires quoted filename */
+			if (TailMatches("FROM"))
+				COMPLETE_WITH_FILES_PLUS("", true, "STDIN", "PROGRAM");
+			else
+				COMPLETE_WITH_FILES_PLUS("", true, "STDOUT", "PROGRAM");
+		}
+		else
+		{
+			/* \copy supports pstdin and pstdout */
+			if (TailMatches("FROM"))
+				COMPLETE_WITH_FILES_PLUS("", false, "STDIN", "PSTDIN", "PROGRAM");
+			else
+				COMPLETE_WITH_FILES_PLUS("", false, "STDOUT", "PSTDOUT", "PROGRAM");
+		}
 	}
 
-	/* Complete COPY <sth> TO <sth> */
-	else if (Matches("COPY|\\copy", MatchAny, "TO", MatchAny))
+	/* Complete COPY|\copy <sth> FROM|TO PROGRAM */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", "PROGRAM"))
+		COMPLETE_WITH_FILES("", HeadMatches("COPY"));	/* COPY requires quoted
+														 * filename */
+
+	/* Complete COPY <sth> TO [PROGRAM] <sth> */
+	else if (Matches("COPY|\\copy", MatchAny, "TO", MatchAnyExcept("PROGRAM")) ||
+			 Matches("COPY|\\copy", MatchAny, "TO", "PROGRAM", MatchAny))
 		COMPLETE_WITH("WITH (");
 
-	/* Complete COPY <sth> FROM <sth> */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny))
+	/* Complete COPY <sth> FROM [PROGRAM] <sth> */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAnyExcept("PROGRAM")) ||
+			 Matches("COPY|\\copy", MatchAny, "FROM", "PROGRAM", MatchAny))
 		COMPLETE_WITH("WITH (", "WHERE");
 
-	/* Complete COPY <sth> FROM filename WITH ( */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", "("))
-		COMPLETE_WITH(Copy_from_options);
+	/* Complete COPY <sth> FROM|TO [PROGRAM] filename WITH ( */
+	else if (HeadMatches("COPY|\\copy", MatchAny, "FROM|TO", MatchAnyExcept("PROGRAM"), "WITH", "(*") ||
+			 HeadMatches("COPY|\\copy", MatchAny, "FROM|TO", "PROGRAM", MatchAny, "WITH", "(*"))
+	{
+		if (!HeadMatches("COPY|\\copy", MatchAny, "FROM|TO", MatchAnyExcept("PROGRAM"), "WITH", "(*)") &&
+			!HeadMatches("COPY|\\copy", MatchAny, "FROM|TO", "PROGRAM", MatchAny, "WITH", "(*)"))
+		{
+			/*
+			 * This fires if we're in an unfinished parenthesized option list.
+			 * get_previous_words treats a completed parenthesized option list
+			 * as one word, so the above tests are correct.
+			 */
 
-	/* Complete COPY <sth> TO filename WITH ( */
-	else if (Matches("COPY|\\copy", MatchAny, "TO", MatchAny, "WITH", "("))
-		COMPLETE_WITH(Copy_to_options);
+			if (ends_with(prev_wd, '(') || ends_with(prev_wd, ','))
+			{
+				if (HeadMatches("COPY|\\copy", MatchAny, "FROM"))
+					COMPLETE_WITH(Copy_from_options);
+				else
+					COMPLETE_WITH(Copy_to_options);
+			}
 
-	/* Complete COPY <sth> FROM|TO filename WITH (FORMAT */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM|TO", MatchAny, "WITH", "(", "FORMAT"))
-		COMPLETE_WITH("binary", "csv", "text");
+			/* Complete COPY <sth> FROM|TO filename WITH (FORMAT */
+			else if (TailMatches("FORMAT"))
+				COMPLETE_WITH("binary", "csv", "text", "json");
 
-	/* Complete COPY <sth> FROM filename WITH (ON_ERROR */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", "(", "ON_ERROR"))
-		COMPLETE_WITH("stop", "ignore");
+			/* Complete COPY <sth> FROM|TO filename WITH (FREEZE */
+			else if (TailMatches("FREEZE"))
+				COMPLETE_WITH("true", "false");
 
-	/* Complete COPY <sth> FROM filename WITH (LOG_VERBOSITY */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", "(", "LOG_VERBOSITY"))
-		COMPLETE_WITH("silent", "default", "verbose");
+			/* Complete COPY <sth> FROM|TO filename WITH (HEADER */
+			else if (TailMatches("HEADER"))
+				COMPLETE_WITH("true", "false", "MATCH");
 
-	/* Complete COPY <sth> FROM <sth> WITH (<options>) */
-	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAny, "WITH", MatchAny))
+			/* Complete COPY <sth> FROM filename WITH (ON_ERROR */
+			else if (TailMatches("ON_ERROR"))
+				COMPLETE_WITH("stop", "ignore", "set_null");
+
+			/* Complete COPY <sth> FROM filename WITH (LOG_VERBOSITY */
+			else if (TailMatches("LOG_VERBOSITY"))
+				COMPLETE_WITH("silent", "default", "verbose");
+		}
+
+		/* A completed parenthesized option list should be caught below */
+	}
+
+	/* Complete COPY <sth> FROM [PROGRAM] <sth> WITH (<options>) */
+	else if (Matches("COPY|\\copy", MatchAny, "FROM", MatchAnyExcept("PROGRAM"), "WITH", MatchAny) ||
+			 Matches("COPY|\\copy", MatchAny, "FROM", "PROGRAM", MatchAny, "WITH", MatchAny))
 		COMPLETE_WITH("WHERE");
 
 	/* CREATE ACCESS METHOD */
@@ -3399,15 +3539,15 @@ match_previous_words(int pattern_id,
 	else if (Matches("CREATE", "DATABASE", MatchAny, "STRATEGY"))
 		COMPLETE_WITH("WAL_LOG", "FILE_COPY");
 
-	/* CREATE DOMAIN */
-	else if (Matches("CREATE", "DOMAIN", MatchAny))
+	/* CREATE DOMAIN --- is allowed inside CREATE SCHEMA, so use TailMatches */
+	else if (TailMatches("CREATE", "DOMAIN", MatchAny))
 		COMPLETE_WITH("AS");
-	else if (Matches("CREATE", "DOMAIN", MatchAny, "AS"))
+	else if (TailMatches("CREATE", "DOMAIN", MatchAny, "AS"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_datatypes);
-	else if (Matches("CREATE", "DOMAIN", MatchAny, "AS", MatchAny))
+	else if (TailMatches("CREATE", "DOMAIN", MatchAny, "AS", MatchAny))
 		COMPLETE_WITH("COLLATE", "DEFAULT", "CONSTRAINT",
 					  "NOT NULL", "NULL", "CHECK (");
-	else if (Matches("CREATE", "DOMAIN", MatchAny, "COLLATE"))
+	else if (TailMatches("CREATE", "DOMAIN", MatchAny, "COLLATE"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_collations);
 
 	/* CREATE EXTENSION */
@@ -3430,7 +3570,7 @@ match_previous_words(int pattern_id,
 
 	/* CREATE FOREIGN DATA WRAPPER */
 	else if (Matches("CREATE", "FOREIGN", "DATA", "WRAPPER", MatchAny))
-		COMPLETE_WITH("HANDLER", "VALIDATOR", "OPTIONS");
+		COMPLETE_WITH("CONNECTION", "HANDLER", "OPTIONS", "VALIDATOR");
 
 	/* CREATE FOREIGN TABLE */
 	else if (Matches("CREATE", "FOREIGN", "TABLE", MatchAny))
@@ -3579,16 +3719,45 @@ match_previous_words(int pattern_id,
 	else if (Matches("CREATE", "POLICY", MatchAny, "ON", MatchAny, "AS", MatchAny, "USING"))
 		COMPLETE_WITH("(");
 
+/* CREATE PROPERTY GRAPH */
+	else if (Matches("CREATE", "PROPERTY"))
+		COMPLETE_WITH("GRAPH");
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny))
+		COMPLETE_WITH("VERTEX");
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE"))
+		COMPLETE_WITH("TABLES");
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES"))
+		COMPLETE_WITH("(");
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "("))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
+	else if (Matches("CREATE", "PROPERTY", "GRAPH", MatchAny, "VERTEX|NODE", "TABLES", "(*)"))
+		COMPLETE_WITH("EDGE");
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") && TailMatches("EDGE|RELATIONSHIP"))
+		COMPLETE_WITH("TABLES");
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") && TailMatches("EDGE|RELATIONSHIP", "TABLES"))
+		COMPLETE_WITH("(");
+	else if (HeadMatches("CREATE", "PROPERTY", "GRAPH") && TailMatches("EDGE|RELATIONSHIP", "TABLES", "("))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
 
 /* CREATE PUBLICATION */
 	else if (Matches("CREATE", "PUBLICATION", MatchAny))
-		COMPLETE_WITH("FOR TABLE", "FOR ALL TABLES", "FOR TABLES IN SCHEMA", "WITH (");
+		COMPLETE_WITH("FOR TABLE", "FOR TABLES IN SCHEMA", "FOR ALL TABLES", "FOR ALL SEQUENCES", "WITH (");
 	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR"))
-		COMPLETE_WITH("TABLE", "ALL TABLES", "TABLES IN SCHEMA");
+		COMPLETE_WITH("TABLE", "TABLES IN SCHEMA", "ALL TABLES", "ALL SEQUENCES");
 	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL"))
-		COMPLETE_WITH("TABLES");
+		COMPLETE_WITH("TABLES", "SEQUENCES");
 	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL", "TABLES"))
-		COMPLETE_WITH("WITH (");
+		COMPLETE_WITH("EXCEPT ( TABLE", "WITH (");
+	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL", "TABLES", "EXCEPT"))
+		COMPLETE_WITH("( TABLE");
+	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL", "TABLES", "EXCEPT", "("))
+		COMPLETE_WITH("TABLE");
+	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL", "TABLES", "EXCEPT", "(", "TABLE"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
+	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL", "TABLES", "EXCEPT", "(", "TABLE", MatchAnyN) && ends_with(prev_wd, ','))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_tables);
+	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "ALL", "TABLES", "EXCEPT", "(", "TABLE", MatchAnyN) && !ends_with(prev_wd, ','))
+		COMPLETE_WITH(")");
 	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "TABLES"))
 		COMPLETE_WITH("IN SCHEMA");
 	else if (Matches("CREATE", "PUBLICATION", MatchAny, "FOR", "TABLE", MatchAny) && !ends_with(prev_wd, ','))
@@ -3742,10 +3911,10 @@ match_previous_words(int pattern_id,
 	else if (Matches("CREATE", "TABLESPACE", MatchAny, "OWNER", MatchAny))
 		COMPLETE_WITH("LOCATION");
 
-/* CREATE TEXT SEARCH */
-	else if (Matches("CREATE", "TEXT", "SEARCH"))
+/* CREATE TEXT SEARCH --- is allowed inside CREATE SCHEMA, so use TailMatches */
+	else if (TailMatches("CREATE", "TEXT", "SEARCH"))
 		COMPLETE_WITH("CONFIGURATION", "DICTIONARY", "PARSER", "TEMPLATE");
-	else if (Matches("CREATE", "TEXT", "SEARCH", "CONFIGURATION|DICTIONARY|PARSER|TEMPLATE", MatchAny))
+	else if (TailMatches("CREATE", "TEXT", "SEARCH", "CONFIGURATION|DICTIONARY|PARSER|TEMPLATE", MatchAny))
 		COMPLETE_WITH("(");
 
 /* CREATE TRANSFORM */
@@ -3767,9 +3936,18 @@ match_previous_words(int pattern_id,
 
 /* CREATE SUBSCRIPTION */
 	else if (Matches("CREATE", "SUBSCRIPTION", MatchAny))
-		COMPLETE_WITH("CONNECTION");
+		COMPLETE_WITH("CONNECTION", "SERVER");
+	else if (Matches("CREATE", "SUBSCRIPTION", MatchAny, "SERVER"))
+		COMPLETE_WITH_QUERY(Query_for_list_of_servers);
+	else if (Matches("CREATE", "SUBSCRIPTION", MatchAny, "SERVER", MatchAny))
+		COMPLETE_WITH("PUBLICATION");
 	else if (Matches("CREATE", "SUBSCRIPTION", MatchAny, "CONNECTION", MatchAny))
 		COMPLETE_WITH("PUBLICATION");
+	else if (Matches("CREATE", "SUBSCRIPTION", MatchAny, "SERVER",
+					 MatchAny, "PUBLICATION"))
+	{
+		/* complete with nothing here as this refers to remote publications */
+	}
 	else if (Matches("CREATE", "SUBSCRIPTION", MatchAny, "CONNECTION",
 					 MatchAny, "PUBLICATION"))
 	{
@@ -3780,7 +3958,8 @@ match_previous_words(int pattern_id,
 	/* Complete "CREATE SUBSCRIPTION <name> ...  WITH ( <opt>" */
 	else if (Matches("CREATE", "SUBSCRIPTION", MatchAnyN, "WITH", "("))
 		COMPLETE_WITH("binary", "connect", "copy_data", "create_slot",
-					  "disable_on_error", "enabled", "failover", "origin",
+					  "disable_on_error", "enabled", "failover",
+					  "max_retention_duration", "origin",
 					  "password_required", "retain_dead_tuples",
 					  "run_as_owner", "slot_name", "streaming",
 					  "synchronous_commit", "two_phase");
@@ -4184,7 +4363,9 @@ match_previous_words(int pattern_id,
 	/* Complete DELETE FROM <table> */
 	else if (TailMatches("DELETE", "FROM", MatchAny))
 		COMPLETE_WITH("USING", "WHERE");
-	/* XXX: implement tab completion for DELETE ... USING */
+	/* Complete DELETE FROM <table> USING with relations supporting SELECT */
+	else if (TailMatches("DELETE", "FROM", MatchAny, "USING"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_selectables);
 
 /* DISCARD */
 	else if (Matches("DISCARD"))
@@ -4289,6 +4470,12 @@ match_previous_words(int pattern_id,
 	}
 	else if (Matches("DROP", "POLICY", MatchAny, "ON", MatchAny))
 		COMPLETE_WITH("CASCADE", "RESTRICT");
+
+	/* DROP PROPERTY GRAPH */
+	else if (Matches("DROP", "PROPERTY"))
+		COMPLETE_WITH("GRAPH");
+	else if (Matches("DROP", "PROPERTY", "GRAPH"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs);
 
 	/* DROP RULE */
 	else if (Matches("DROP", "RULE", MatchAny))
@@ -4534,6 +4721,7 @@ match_previous_words(int pattern_id,
 											"LARGE OBJECT",
 											"PARAMETER",
 											"PROCEDURE",
+											"PROPERTY GRAPH",
 											"ROUTINE",
 											"SCHEMA",
 											"SEQUENCE",
@@ -4548,13 +4736,10 @@ match_previous_words(int pattern_id,
 					  "ROUTINES IN SCHEMA",
 					  "SEQUENCES IN SCHEMA",
 					  "TABLES IN SCHEMA");
-	else if (TailMatches("GRANT|REVOKE", MatchAny, "ON", "FOREIGN") ||
-			 TailMatches("REVOKE", "GRANT", "OPTION", "FOR", MatchAny, "ON", "FOREIGN"))
-		COMPLETE_WITH("DATA WRAPPER", "SERVER");
 
 	/*
 	 * Complete "GRANT/REVOKE * ON DATABASE/DOMAIN/..." with a list of
-	 * appropriate objects.
+	 * appropriate objects or keywords.
 	 *
 	 * Complete "GRANT/REVOKE * ON *" with "TO/FROM".
 	 */
@@ -4567,8 +4752,17 @@ match_previous_words(int pattern_id,
 			COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_domains);
 		else if (TailMatches("FUNCTION"))
 			COMPLETE_WITH_VERSIONED_SCHEMA_QUERY(Query_for_list_of_functions);
+		else if (TailMatches("FOREIGN"))
+			COMPLETE_WITH("DATA WRAPPER", "SERVER");
 		else if (TailMatches("LANGUAGE"))
 			COMPLETE_WITH_QUERY(Query_for_list_of_languages);
+		else if (TailMatches("LARGE"))
+		{
+			if (HeadMatches("ALTER", "DEFAULT", "PRIVILEGES"))
+				COMPLETE_WITH("OBJECTS");
+			else
+				COMPLETE_WITH("OBJECT");
+		}
 		else if (TailMatches("PROCEDURE"))
 			COMPLETE_WITH_VERSIONED_SCHEMA_QUERY(Query_for_list_of_procedures);
 		else if (TailMatches("ROUTINE"))
@@ -4685,6 +4879,14 @@ match_previous_words(int pattern_id,
 		else
 			COMPLETE_WITH("FROM");
 	}
+
+/* GRAPH_TABLE */
+	else if (TailMatches("GRAPH_TABLE"))
+		COMPLETE_WITH("(");
+	else if (TailMatches("GRAPH_TABLE", "("))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs);
+	else if (TailMatches("GRAPH_TABLE", "(", MatchAny))
+		COMPLETE_WITH("MATCH");
 
 /* GROUP BY */
 	else if (TailMatches("FROM", MatchAny, "GROUP"))
@@ -4909,7 +5111,8 @@ match_previous_words(int pattern_id,
 
 /* PREPARE xx AS */
 	else if (Matches("PREPARE", MatchAny, "AS"))
-		COMPLETE_WITH("SELECT", "UPDATE", "INSERT INTO", "DELETE FROM");
+		COMPLETE_WITH("SELECT", "UPDATE", "INSERT INTO", "DELETE FROM",
+					  "MERGE INTO", "VALUES", "WITH", "TABLE");
 
 /*
  * PREPARE TRANSACTION is missing on purpose. It's intended for transaction
@@ -4997,6 +5200,47 @@ match_previous_words(int pattern_id,
 			COMPLETE_WITH_QUERY(Query_for_list_of_tablespaces);
 	}
 
+/* REPACK */
+	else if (Matches("REPACK"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_clusterables,
+										"(", "USING INDEX");
+	else if (Matches("REPACK", "(*)"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_clusterables,
+										"USING INDEX");
+	else if (Matches("REPACK", MatchAnyExcept("(")))
+		COMPLETE_WITH("USING INDEX");
+	else if (Matches("REPACK", "(*)", MatchAnyExcept("(")))
+		COMPLETE_WITH("USING INDEX");
+	else if (Matches("REPACK", MatchAny, "USING", "INDEX") ||
+			 Matches("REPACK", "(*)", MatchAny, "USING", "INDEX"))
+	{
+		set_completion_reference(prev3_wd);
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_index_of_table);
+	}
+
+	/*
+	 * Complete ... [ (*) ] <sth> USING INDEX, with a list of indexes for
+	 * <sth>.
+	 */
+	else if (TailMatches(MatchAny, "USING", "INDEX"))
+	{
+		set_completion_reference(prev3_wd);
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_index_of_table);
+	}
+	else if (HeadMatches("REPACK", "(*") &&
+			 !HeadMatches("REPACK", "(*)"))
+	{
+		/*
+		 * This fires if we're in an unfinished parenthesized option list.
+		 * get_previous_words treats a completed parenthesized option list as
+		 * one word, so the above test is correct.
+		 */
+		if (ends_with(prev_wd, '(') || ends_with(prev_wd, ','))
+			COMPLETE_WITH("ANALYZE", "CONCURRENTLY", "VERBOSE");
+		else if (TailMatches("ANALYZE", "CONCURRENTLY", "VERBOSE"))
+			COMPLETE_WITH("ON", "OFF");
+	}
+
 /* SECURITY LABEL */
 	else if (Matches("SECURITY"))
 		COMPLETE_WITH("LABEL");
@@ -5009,8 +5253,10 @@ match_previous_words(int pattern_id,
 		COMPLETE_WITH("TABLE", "COLUMN", "AGGREGATE", "DATABASE", "DOMAIN",
 					  "EVENT TRIGGER", "FOREIGN TABLE", "FUNCTION",
 					  "LARGE OBJECT", "MATERIALIZED VIEW", "LANGUAGE",
-					  "PUBLICATION", "PROCEDURE", "ROLE", "ROUTINE", "SCHEMA",
+					  "PROPERTY GRAPH", "PUBLICATION", "PROCEDURE", "ROLE", "ROUTINE", "SCHEMA",
 					  "SEQUENCE", "SUBSCRIPTION", "TABLESPACE", "TYPE", "VIEW");
+	else if (Matches("SECURITY", "LABEL", "ON", "PROPERTY", "GRAPH"))
+		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_propgraphs);
 	else if (Matches("SECURITY", "LABEL", "ON", MatchAny, MatchAny))
 		COMPLETE_WITH("IS");
 
@@ -5226,24 +5472,6 @@ match_previous_words(int pattern_id,
 										"VERBOSE",
 										"ANALYZE",
 										"ONLY");
-	else if (Matches("VACUUM", "FULL"))
-		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
-										"FREEZE",
-										"VERBOSE",
-										"ANALYZE",
-										"ONLY");
-	else if (Matches("VACUUM", MatchAnyN, "FREEZE"))
-		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
-										"VERBOSE",
-										"ANALYZE",
-										"ONLY");
-	else if (Matches("VACUUM", MatchAnyN, "VERBOSE"))
-		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
-										"ANALYZE",
-										"ONLY");
-	else if (Matches("VACUUM", MatchAnyN, "ANALYZE"))
-		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
-										"ONLY");
 	else if (HeadMatches("VACUUM", "(*") &&
 			 !HeadMatches("VACUUM", "(*)"))
 	{
@@ -5263,11 +5491,72 @@ match_previous_words(int pattern_id,
 		else if (TailMatches("INDEX_CLEANUP"))
 			COMPLETE_WITH("AUTO", "ON", "OFF");
 	}
+	else if (Matches("VACUUM", "(*)"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"ONLY");
+	else if (Matches("VACUUM", "FULL"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"FREEZE",
+										"VERBOSE",
+										"ANALYZE",
+										"ONLY");
+	else if (Matches("VACUUM", MatchAnyN, "FREEZE"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"VERBOSE",
+										"ANALYZE",
+										"ONLY");
+	else if (Matches("VACUUM", MatchAnyN, "VERBOSE"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"ANALYZE",
+										"ONLY");
+	else if (Matches("VACUUM", MatchAnyN, "ANALYZE"))
+		COMPLETE_WITH_SCHEMA_QUERY_PLUS(Query_for_list_of_vacuumables,
+										"ONLY");
 	else if (Matches("VACUUM", MatchAnyN, "("))
 		/* "VACUUM (" should be caught above, so assume we want columns */
 		COMPLETE_WITH_ATTR(prev2_wd);
 	else if (HeadMatches("VACUUM"))
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_vacuumables);
+
+/*
+ * WAIT FOR LSN '<lsn>' [ WITH ( option [, ...] ) ]
+ * where option can be:
+ *   MODE '<mode>'
+ *   TIMEOUT '<timeout>'
+ *   NO_THROW
+ * and mode can be:
+ *   standby_replay | standby_write | standby_flush | primary_flush
+ */
+	else if (Matches("WAIT"))
+		COMPLETE_WITH("FOR");
+	else if (Matches("WAIT", "FOR"))
+		COMPLETE_WITH("LSN");
+	else if (Matches("WAIT", "FOR", "LSN"))
+		/* No completion for LSN value - user must provide manually */
+		;
+	else if (Matches("WAIT", "FOR", "LSN", MatchAny))
+		COMPLETE_WITH("WITH");
+	else if (Matches("WAIT", "FOR", "LSN", MatchAny, "WITH"))
+		COMPLETE_WITH("(");
+
+	/*
+	 * Handle parenthesized option list.  This fires when we're in an
+	 * unfinished parenthesized option list.  get_previous_words treats a
+	 * completed parenthesized option list as one word, so the above test is
+	 * correct.
+	 *
+	 * 'mode' takes a string value (one of the listed above), 'timeout' takes
+	 * a string value, and 'no_throw' takes no value.  We do not offer
+	 * completions for the *values* of 'timeout' or 'no_throw'.
+	 */
+	else if (HeadMatches("WAIT", "FOR", "LSN", MatchAny, "WITH", "(*") &&
+			 !HeadMatches("WAIT", "FOR", "LSN", MatchAny, "WITH", "(*)"))
+	{
+		if (ends_with(prev_wd, '(') || ends_with(prev_wd, ','))
+			COMPLETE_WITH("mode", "timeout", "no_throw");
+		else if (TailMatches("mode"))
+			COMPLETE_WITH("'standby_replay'", "'standby_write'", "'standby_flush'", "'primary_flush'");
+	}
 
 /* WITH [RECURSIVE] */
 
@@ -5425,9 +5714,9 @@ match_previous_words(int pattern_id,
 	else if (TailMatchesCS("\\h|\\help", MatchAny))
 	{
 		if (TailMatches("DROP"))
-			matches = rl_completion_matches(text, drop_command_generator);
+			COMPLETE_WITH_GENERATOR(drop_command_generator);
 		else if (TailMatches("ALTER"))
-			matches = rl_completion_matches(text, alter_command_generator);
+			COMPLETE_WITH_GENERATOR(alter_command_generator);
 
 		/*
 		 * CREATE is recognized by tail match elsewhere, so doesn't need to be
@@ -5448,6 +5737,8 @@ match_previous_words(int pattern_id,
 			COMPLETE_WITH("OBJECT");
 		else if (TailMatches("CREATE|ALTER|DROP", "MATERIALIZED"))
 			COMPLETE_WITH("VIEW");
+		else if (TailMatches("CREATE|ALTER|DROP", "PROPERTY"))
+			COMPLETE_WITH("GRAPH");
 		else if (TailMatches("CREATE|ALTER|DROP", "TEXT"))
 			COMPLETE_WITH("SEARCH");
 		else if (TailMatches("CREATE|ALTER|DROP", "USER"))
@@ -5467,7 +5758,8 @@ match_previous_words(int pattern_id,
 	else if (TailMatchesCS("\\password"))
 		COMPLETE_WITH_QUERY(Query_for_list_of_roles);
 	else if (TailMatchesCS("\\pset"))
-		COMPLETE_WITH_CS("border", "columns", "csv_fieldsep", "expanded",
+		COMPLETE_WITH_CS("border", "columns", "csv_fieldsep",
+						 "display_false", "display_true", "expanded",
 						 "fieldsep", "fieldsep_zero", "footer", "format",
 						 "linestyle", "null", "numericlocale",
 						 "pager", "pager_min_lines",
@@ -5526,12 +5818,9 @@ match_previous_words(int pattern_id,
 		COMPLETE_WITH_SCHEMA_QUERY(Query_for_list_of_views);
 	else if (TailMatchesCS("\\cd|\\e|\\edit|\\g|\\gx|\\i|\\include|"
 						   "\\ir|\\include_relative|\\o|\\out|"
-						   "\\s|\\w|\\write|\\lo_import"))
-	{
-		completion_charp = "\\";
-		completion_force_quote = false;
-		matches = rl_completion_matches(text, complete_from_files);
-	}
+						   "\\s|\\w|\\write|\\lo_import") ||
+			 TailMatchesCS("\\lo_export", MatchAny))
+		COMPLETE_WITH_FILES("\\", false);
 
 	/* gen_tabcomplete.pl ends special processing here */
 	/* END GEN_TABCOMPLETE */
@@ -5559,7 +5848,7 @@ match_previous_words(int pattern_id,
  * Entries that have 'excluded' flags are not returned.
  */
 static char *
-create_or_drop_command_generator(const char *text, int state, bits32 excluded)
+create_or_drop_command_generator(const char *text, int state, uint32 excluded)
 {
 	static int	list_index,
 				string_length;
@@ -6194,8 +6483,7 @@ append_variable_names(char ***varnames, int *nvars,
 	if (*nvars >= *maxvars)
 	{
 		*maxvars *= 2;
-		*varnames = (char **) pg_realloc(*varnames,
-										 ((*maxvars) + 1) * sizeof(char *));
+		*varnames = pg_realloc_array(*varnames, char *, (*maxvars) + 1);
 	}
 
 	(*varnames)[(*nvars)++] = psprintf("%s%s%s", prefix, varname, suffix);
@@ -6220,7 +6508,7 @@ complete_from_variables(const char *text, const char *prefix, const char *suffix
 	int			i;
 	struct _variable *ptr;
 
-	varnames = (char **) pg_malloc((maxvars + 1) * sizeof(char *));
+	varnames = pg_malloc_array(char *, maxvars + 1);
 
 	for (ptr = pset.vars->next; ptr; ptr = ptr->next)
 	{
@@ -6242,6 +6530,59 @@ complete_from_variables(const char *text, const char *prefix, const char *suffix
 
 
 /*
+ * This function returns in order one of a fixed, NULL pointer terminated list
+ * of string that matches file names or optionally specified list of keywords.
+ *
+ * If completion_charpp is set to a null-terminated array of literal keywords,
+ * those keywords are added to the completion results alongside filenames if
+ * they case-insensitively match the current input.
+ */
+static char *
+complete_from_files(const char *text, int state)
+{
+	static int	list_index;
+	static bool files_done;
+	const char *item;
+
+	/* Initialization */
+	if (state == 0)
+	{
+		list_index = 0;
+		files_done = false;
+	}
+
+	if (!files_done)
+	{
+		char	   *result = _complete_from_files(text, state);
+
+		/* Return a filename that matches */
+		if (result)
+			return result;
+
+		/* There are no more matching files */
+		files_done = true;
+	}
+
+	if (!completion_charpp)
+		return NULL;
+
+	/*
+	 * Check for hard-wired keywords. These will only be returned if they
+	 * match the input-so-far, ignoring case.
+	 */
+	while ((item = completion_charpp[list_index++]))
+	{
+		if (pg_strncasecmp(text, item, strlen(text)) == 0)
+		{
+			completion_force_quote = false;
+			return pg_strdup_keyword_case(item, text);
+		}
+	}
+
+	return NULL;
+}
+
+/*
  * This function wraps rl_filename_completion_function() to strip quotes from
  * the input before searching for matches and to quote any matches for which
  * the consuming command will require it.
@@ -6255,7 +6596,7 @@ complete_from_variables(const char *text, const char *prefix, const char *suffix
  * quotes around the result.  (The SQL COPY command requires that.)
  */
 static char *
-complete_from_files(const char *text, int state)
+_complete_from_files(const char *text, int state)
 {
 #ifdef USE_FILENAME_QUOTING_FUNCTIONS
 
@@ -6745,7 +7086,7 @@ get_previous_words(int point, char **buffer, int *nwords)
 	 * This is usually much more space than we need, but it's cheaper than
 	 * doing a separate malloc() for each word.
 	 */
-	previous_words = (char **) pg_malloc(point * sizeof(char *));
+	previous_words = pg_malloc_array(char *, point);
 	*buffer = outptr = (char *) pg_malloc(point * 2);
 
 	/*

@@ -328,7 +328,7 @@
         of <parameter>newsubstring</parameter>.
        </para>
        <para>
-        <literal>overlay('Txxxxas' placing 'hom' from 2 for 4)</literal>
+        <literal>overlay('Txxxxas' PLACING 'hom' FROM 2 FOR 4)</literal>
         <returnvalue>Thomas</returnvalue>
        </para></entry>
       </row>
@@ -347,7 +347,7 @@
         <parameter>string</parameter>, or zero if it's not present.
        </para>
        <para>
-        <literal>position('om' in 'Thomas')</literal>
+        <literal>position('om' IN 'Thomas')</literal>
         <returnvalue>3</returnvalue>
        </para></entry>
       </row>
@@ -411,15 +411,15 @@
         and <parameter>count</parameter>.
        </para>
        <para>
-        <literal>substring('Thomas' from 2 for 3)</literal>
+        <literal>substring('Thomas' FROM 2 FOR 3)</literal>
         <returnvalue>hom</returnvalue>
        </para>
        <para>
-        <literal>substring('Thomas' from 3)</literal>
+        <literal>substring('Thomas' FROM 3)</literal>
         <returnvalue>omas</returnvalue>
        </para>
        <para>
-        <literal>substring('Thomas' for 2)</literal>
+        <literal>substring('Thomas' FOR 2)</literal>
         <returnvalue>Th</returnvalue>
        </para></entry>
       </row>
@@ -431,10 +431,10 @@
        </para>
        <para>
         Extracts the first substring matching POSIX regular expression; see
-        <xref linkend="functions-posix-regexp"/>.
+        <xref linkend="functions-posix-substring"/>.
        </para>
        <para>
-        <literal>substring('Thomas' from '...$')</literal>
+        <literal>substring('Thomas' FROM '...$')</literal>
         <returnvalue>mas</returnvalue>
        </para></entry>
       </row>
@@ -455,7 +455,7 @@
         and should be considered obsolete.
        </para>
        <para>
-        <literal>substring('Thomas' similar '%#"o_a#"_' escape '#')</literal>
+        <literal>substring('Thomas' SIMILAR '%#"o_a#"_' ESCAPE '#')</literal>
         <returnvalue>oma</returnvalue>
        </para></entry>
       </row>
@@ -693,12 +693,21 @@
         <returnvalue>text</returnvalue>
        </para>
        <para>
-        Converts the first letter of each word to upper case and the
-        rest to lower case. When using the <literal>libc</literal> locale
-        provider, words are sequences of alphanumeric characters separated
-        by non-alphanumeric characters; when using the ICU locale provider,
-        words are separated according to
-        <ulink url="https://www.unicode.org/reports/tr29/#Word_Boundaries">Unicode Standard Annex #29</ulink>.
+        Converts the first letter of each word to upper case (or title case
+        if the letter is a digraph and locale is <literal>ICU</literal> or
+        <literal>builtin</literal> <literal>PG_UNICODE_FAST</literal>)
+        and the rest to lower case. When using the <literal>libc</literal> or
+        <literal>builtin</literal> locale provider, words are sequences of
+        alphanumeric characters separated by non-alphanumeric characters;
+        when using the ICU locale provider, words are separated according to
+        <ulink url="https://unicode-org.github.io/icu-docs/apidoc/dev/icu4c/ustring_8h.html#a47602e2c2012d77ee91908b9bbfdc063">u_strToTitle ICU function</ulink>.
+       </para>
+       <para>
+        This function is primarily used for convenient
+        display, and the specific result should not be relied upon because of
+        the differences between locale providers and between different
+        ICU versions. If specific word boundary rules are desired,
+        it is recommended to write a custom function.
        </para>
        <para>
         <literal>initcap('hi THOMAS')</literal>
@@ -952,7 +961,7 @@
         Returns the number of times the POSIX regular
         expression <parameter>pattern</parameter> matches in
         the <parameter>string</parameter>; see
-        <xref linkend="functions-posix-regexp"/>.
+        <xref linkend="functions-posix-regexp-count"/>.
        </para>
        <para>
         <literal>regexp_count('123456789012', '\d\d\d', 2)</literal>
@@ -977,7 +986,7 @@
         Returns the position within <parameter>string</parameter> where
         the <parameter>N</parameter>'th match of the POSIX regular
         expression <parameter>pattern</parameter> occurs, or zero if there is
-        no such match; see <xref linkend="functions-posix-regexp"/>.
+        no such match; see <xref linkend="functions-posix-regexp-instr"/>.
        </para>
        <para>
         <literal>regexp_instr('ABCDEF', 'c(.)(..)', 1, 1, 0, 'i')</literal>
@@ -1002,7 +1011,7 @@
         Checks whether a match of the POSIX regular
         expression <parameter>pattern</parameter> occurs
         within <parameter>string</parameter>; see
-        <xref linkend="functions-posix-regexp"/>.
+        <xref linkend="functions-posix-regexp-like"/>.
        </para>
        <para>
         <literal>regexp_like('Hello World', 'world$', 'i')</literal>
@@ -1022,7 +1031,7 @@
         Returns substrings within the first match of the POSIX regular
         expression <parameter>pattern</parameter> to
         the <parameter>string</parameter>; see
-        <xref linkend="functions-posix-regexp"/>.
+        <xref linkend="functions-posix-regexp-match"/>.
        </para>
        <para>
         <literal>regexp_match('foobarbequebaz', '(bar)(beque)')</literal>
@@ -1043,7 +1052,7 @@
         expression <parameter>pattern</parameter> to
         the <parameter>string</parameter>, or substrings within all
         such matches if the <literal>g</literal> flag is used;
-        see <xref linkend="functions-posix-regexp"/>.
+        see <xref linkend="functions-posix-regexp-matches"/>.
        </para>
        <para>
         <literal>regexp_matches('foobarbequebaz', 'ba.', 'g')</literal>
@@ -1068,7 +1077,7 @@
         Replaces the substring that is the first match to the POSIX
         regular expression <parameter>pattern</parameter>, or all such
         matches if the <literal>g</literal> flag is used; see
-        <xref linkend="functions-posix-regexp"/>.
+        <xref linkend="functions-posix-regexp-replace"/>.
        </para>
        <para>
         <literal>regexp_replace('Thomas', '.[mN]a.', 'M')</literal>
@@ -1091,7 +1100,7 @@
         search beginning at the <parameter>start</parameter>'th character
         of <parameter>string</parameter>.  If <parameter>N</parameter> is
         omitted, it defaults to 1.  See
-        <xref linkend="functions-posix-regexp"/>.
+        <xref linkend="functions-posix-regexp-replace"/>.
        </para>
        <para>
         <literal>regexp_replace('Thomas', '.', 'X', 3, 2)</literal>
@@ -1114,7 +1123,7 @@
        <para>
         Splits <parameter>string</parameter> using a POSIX regular
         expression as the delimiter, producing an array of results; see
-        <xref linkend="functions-posix-regexp"/>.
+        <xref linkend="functions-posix-regexp-split-to-array"/>.
        </para>
        <para>
         <literal>regexp_split_to_array('hello world', '\s+')</literal>
@@ -1133,7 +1142,7 @@
        <para>
         Splits <parameter>string</parameter> using a POSIX regular
         expression as the delimiter, producing a set of results; see
-        <xref linkend="functions-posix-regexp"/>.
+        <xref linkend="functions-posix-regexp-split-to-table"/>.
        </para>
        <para>
         <literal>regexp_split_to_table('hello world', '\s+')</literal>
@@ -1162,7 +1171,7 @@
         matches the <parameter>N</parameter>'th occurrence of the POSIX
         regular expression <parameter>pattern</parameter>,
         or <literal>NULL</literal> if there is no such match; see
-        <xref linkend="functions-posix-regexp"/>.
+        <xref linkend="functions-posix-regexp-substr"/>.
        </para>
        <para>
         <literal>regexp_substr('ABCDEF', 'c(.)(..)', 1, 1, 'i')</literal>
